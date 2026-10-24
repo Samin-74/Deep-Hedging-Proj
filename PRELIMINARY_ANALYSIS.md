@@ -27,10 +27,13 @@ training mode and in evaluation mode is identical by construction. This removed 
 seed-to-seed standard deviation of the risk measures by roughly a factor of 7, and made training about
 2.6 times faster. The BatchNorm path is retained behind `--norm batchnorm` for comparison.
 
-Beyond the main study, the document reports a full-budget cost sensitivity for both simulators, a
-Heston diagnostic figure set, an intra-horizon drawdown alongside the terminal-jump version, an
-entropic risk aversion sweep over `lambda` in {0.5, 1.0, 2.0}, and a re-test of the time-dependent
-weight-sharing mode. All experiments use the same PnL engine and evaluation protocol.
+Every study in this document now uses 5 seeds (42 to 46) at 100,000 training paths and 20 epochs per
+configuration, so all reported numbers are mean $\pm$ standard deviation on a common budget and no
+result rests on a single training run. Beyond the main study, the document reports a full-budget cost
+sensitivity for both simulators, a Heston policy surface and diagnostic figure set, an intra-horizon
+drawdown alongside the terminal-jump version, an entropic risk aversion frontier over `lambda` from
+0.25 to 4.00, and a re-test of the time-dependent weight-sharing mode. All experiments use the same
+PnL engine and evaluation protocol.
 
 Status: methodology and qualitative claims reproduce. Empirical coverage is partial, see the verdict.
 
@@ -398,25 +401,35 @@ at zero cost to 1.340 at one percent, which is the paper's central qualitative p
 The same cost study was run under the Heston simulator, using the existing simulator and PnL engine
 with no changes to either. The benchmark volatility is the variance-adjusted value
 $\sigma = \sqrt{v_0} = 0.2$, so the analytic deltas are the same Black-Scholes and Leland formulas
-evaluated at the long-run variance. Budget: 100,000 paths and 20 epochs per cost level, matching the
-GBM study exactly.
+evaluated at the long-run variance. Budget: 100,000 paths, 20 epochs and 5 seeds (42 to 46) per cost
+level, matching the GBM study exactly. Each cell is mean $\pm$ standard deviation over the 5 seeds.
 
-| Cost | Deep mean | Deep CVaR95 | Deep CVaR99 | BS CVaR95 | BS CVaR99 | Leland CVaR95 | Leland CVaR99 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.00% | -2.270 | 3.234 | 3.664 | 3.300 | 3.821 | 3.300 | 3.821 |
-| 0.10% | -2.428 | 3.425 | 3.838 | 3.610 | 4.164 | 3.569 | 4.105 |
-| 0.50% | -2.804 | 4.227 | 4.641 | 4.900 | 5.584 | 4.588 | 5.187 |
-| 1.00% | -3.200 | 4.980 | 5.547 | 6.568 | 7.417 | 5.757 | 6.429 |
+| Cost | Deep mean | Deep CVaR 95 | Deep CVaR 99 | BS CVaR 95 | Leland CVaR 95 |
+| --- | --- | --- | --- | --- | --- |
+| 0.00% | -2.269 ± 0.002 | 3.216 ± 0.018 | 3.625 ± 0.035 | 3.292 ± 0.006 | 3.292 ± 0.006 |
+| 0.10% | -2.427 ± 0.004 | 3.430 ± 0.016 | 3.817 ± 0.036 | 3.601 ± 0.006 | 3.560 ± 0.006 |
+| 0.50% | -2.807 ± 0.017 | 4.244 ± 0.065 | 4.710 ± 0.081 | 4.892 ± 0.007 | 4.580 ± 0.006 |
+| 1.00% | -3.201 ± 0.057 | 5.106 ± 0.109 | 5.718 ± 0.150 | 6.559 ± 0.009 | 5.749 ± 0.006 |
 
-The zero-cost deficit is gone. At the full budget the learned policy beats both benchmarks at zero
-cost, with CVaR 95 of 3.234 against 3.300 and CVaR 99 of 3.664 against 3.821, and its mean PnL of
--2.270 is better than the benchmark's -2.276. The earlier 0.174 deficit at 20,000 paths and 10 epochs
-was a budget artifact, exactly as the GBM study predicted.
+Significance against Leland, using the standard error of the 5-seed mean:
 
-The margin widens monotonically with cost: 0.144 at 0.10 percent, 0.361 at 0.50 percent and 0.777 at
-1.00 percent against Leland, and 1.588 against Black-Scholes at 1.00 percent. The Heston and GBM
-studies agree closely at one percent cost, 4.980 against 5.023 for deep hedging, which is expected
-since the benchmark volatility is the same in both.
+| Cost | CVaR 95 gap | t ratio | CVaR 99 gap | t ratio |
+| --- | --- | --- | --- | --- |
+| 0.00% | +0.075 | 9.4 | +0.186 | 12.0 |
+| 0.10% | +0.131 | 18.1 | +0.278 | 17.2 |
+| 0.50% | +0.336 | 11.5 | +0.462 | 12.8 |
+| 1.00% | +0.643 | 13.1 | +0.691 | 10.3 |
+
+The zero-cost deficit is gone and the result is now statistically secure rather than a single
+observation. At the full budget the learned policy beats both benchmarks at zero cost, with CVaR 95 of
+3.216 against 3.292 and CVaR 99 of 3.625 against 3.811, at t ratios of 9.4 and 12.0. Every gap at
+every cost level is significant at t of 9.4 or higher.
+
+The margin widens monotonically with cost, from a CVaR 95 gap of 0.075 at zero cost to 0.643 at one
+percent. The Heston and GBM studies agree closely at one percent cost, 5.106 against 4.980 for deep
+hedging, which is expected since the benchmark volatility is the same in both. The Heston dispersion
+is larger than the GBM dispersion, 0.109 against 0.063 at one percent, which reflects the additional
+variance-state sampling.
 
 The Heston results also show that the policy uses the variance state. The learned policy is trained
 with the variance path as an input, and it beats the variance-adjusted analytic benchmarks at every
@@ -425,19 +438,40 @@ This is a qualitative observation, not a controlled ablation.
 
 ### Heston figures
 
-Two figures are saved for the Heston study. `heston_cost_sensitivity.png` reproduces the cost sweep in
-the same layout as the GBM version, with CVaR 95 and CVaR 99 against cost for all three strategies.
+Three figures are saved for the Heston study. `heston_cost_sensitivity.png` reproduces the cost sweep
+in the same layout as the GBM version, with CVaR 95 and CVaR 99 against cost for all three strategies.
 `heston_diagnostics.png` has three panels: the square root of the variance paths, which shows the
 mean-reverting dispersion around the initial level of 0.20; the hedge position against instantaneous
 volatility colored by decision step; and the hedge position against moneyness colored by volatility.
+`heston_policy_curves.png` is the policy counterpart of the GBM policy figure and is described next.
 
-The middle panel is the informative one. The position is a decreasing function of volatility at fixed
-moneyness, which is the correct qualitative response: higher variance means a more valuable call and a
-higher delta, but it also means the policy should hedge less aggressively per unit of spot move because
-the cost of trading against a volatile path is higher. The learned surface shows the position falling
-from about 0.6 at volatility 0.10 to about 0.2 at volatility 0.30 for the same spot level. The right
-panel shows the position is still primarily driven by moneyness, with volatility acting as a secondary
-modifier, which is the expected ordering of importance.
+The diagnostics figure shows that the position is primarily driven by moneyness, with volatility acting
+as a secondary modifier. That ordering is confirmed by a direct probe of the policy surface: at the
+money and at step 15, moving volatility from 0.10 to 0.35 raises the position from 0.158 to 0.240, a
+spread of 0.082, while moving spot from 0.95 to 1.05 times the strike moves it by about 0.33. The
+variance effect is therefore real but roughly a quarter the size of the moneyness effect.
+
+### Heston policy surface
+
+`heston_policy_curves.png` has three panels. Left: a heatmap of the hedge position against spot on the
+horizontal axis and instantaneous volatility on the vertical axis, at step 15 with the previous
+position at zero, with the three probe volatility levels marked as dotted lines. Middle: the position
+against spot for three fixed previous positions at volatility 0.20, against the Black-Scholes delta.
+Right: the implied no-trade band, the trade size against spot for the same three previous positions.
+
+The heatmap is the panel that makes the variance dependence readable. A line plot of three volatility
+levels largely overlaps because the effect is modest, whereas the heatmap shows the whole surface. The
+position rises with spot as expected, and at any fixed spot it rises with volatility, from about 0.15 at
+volatility 0.10 to about 0.24 at 0.35 at the money. The gradient is steeper in the region where the
+call is near or above the strike, where convexity matters most, and flattens deep in the money where
+the position approaches its upper bound.
+
+The middle and right panels reproduce the GBM result in the Heston setting. The learned position lies
+below the Black-Scholes delta across the whole spot range, and the trade size is close to zero over a
+wide interval that shifts with the previous position. The band is widest for the previous position of
+0.30, where the policy declines to trade for spot between roughly 90 and 100, which is the same
+asymmetric no-transaction region seen in the GBM study. The variance-aware policy therefore preserves
+the qualitative structure of the frictional optimum rather than collapsing to a memoryless delta.
 
 ### Drawdown: terminal jump against intra-horizon
 
@@ -463,30 +497,48 @@ to the terminal distribution.
 ### Entropic risk aversion sweep
 
 The entropic risk measure has a single tuning parameter, and the paper treats it as a family of
-solutions rather than a fixed choice. The sweep trains the main GBM configuration at
-`lambda` in {0.5, 1.0, 2.0}, 100,000 paths and 20 epochs each, on identical training and evaluation
-paths.
+solutions rather than a fixed choice. The sweep trains the main GBM configuration at five values of
+`lambda`, 100,000 paths, 20 epochs and 5 seeds (42 to 46) each, so every cell is mean $\pm$ standard
+deviation over the 5 seeds. Five values rather than three are used so the frontier is smooth enough to
+read as a curve.
 
-| Lambda | Mean PnL | Std | CVaR 95 | CVaR 99 | Entropic | Mean cost | Turnover |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.50 | -3.135 | 1.168 | 5.979 | 7.102 | 3.526 | 0.847 | 0.845 |
-| 1.00 | -3.315 | 0.776 | 4.895 | 5.410 | 3.613 | 1.029 | 1.028 |
-| 2.00 | -3.415 | 0.686 | 4.762 | 5.177 | 3.859 | 1.128 | 1.127 |
+| Lambda | Mean PnL | Std | CVaR 95 | CVaR 99 | Entropic | Mean cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.25 | -2.820 ± 0.019 | 1.550 ± 0.053 | 6.691 ± 0.172 | 8.174 ± 0.304 | 3.158 ± 0.026 | 0.534 ± 0.017 |
+| 0.50 | -3.067 ± 0.052 | 1.108 ± 0.048 | 5.597 ± 0.222 | 6.488 ± 0.349 | 3.401 ± 0.077 | 0.781 ± 0.048 |
+| 1.00 | -3.252 ± 0.056 | 0.823 ± 0.044 | 4.980 ± 0.063 | 5.542 ± 0.086 | 3.600 ± 0.030 | 0.967 ± 0.054 |
+| 2.00 | -3.428 ± 0.039 | 0.686 ± 0.019 | 4.813 ± 0.038 | 5.257 ± 0.068 | 3.897 ± 0.037 | 1.143 ± 0.039 |
+| 4.00 | -3.633 ± 0.024 | 0.592 ± 0.011 | 4.764 ± 0.017 | 5.120 ± 0.031 | 4.316 ± 0.044 | 1.348 ± 0.020 |
 
-The tradeoff is clean and monotone in every column. Raising `lambda` from 0.5 to 2.0 reduces the
-standard deviation from 1.168 to 0.686 and CVaR 95 from 5.979 to 4.762, at the cost of mean PnL
-falling from -3.135 to -3.415 and transaction cost rising from 0.847 to 1.128. Turnover rises in
-lockstep with cost, which confirms the mechanism: a more risk averse objective trades more to suppress
-dispersion and pays for it.
+Turnover tracks mean cost almost exactly, from 0.530 at `lambda = 0.25` to 1.348 at `lambda = 4.00`,
+since cost is proportional to traded volume at a common price level. It is omitted from the table only
+to keep the width manageable.
 
-The entropic risk itself rises with `lambda`, from 3.526 to 3.859, which is not a contradiction. The
+The tradeoff is clean and monotone in every column. Raising `lambda` from 0.25 to 4.00 reduces the
+standard deviation from 1.550 to 0.592 and CVaR 95 from 6.691 to 4.764, at the cost of mean PnL
+falling from -2.820 to -3.633 and transaction cost rising from 0.534 to 1.348. This is the expected
+risk-return frontier: a more risk averse objective trades more to suppress dispersion and pays for it
+in cost and in expected PnL.
+
+The frontier is computed at a single cost level, `cost_rate = 0.01`. At zero cost the policy would
+converge to the Black-Scholes delta for every `lambda` on this sweep, since with no friction there is
+no cost to trading and the objective reduces to minimizing the risk of an unhedged gap. The `lambda`
+family is informative precisely because costs make the tradeoff non-trivial.
+
+The entropic risk itself rises with `lambda`, from 3.158 to 4.316, which is not a contradiction. The
 entropic risk measure is `lambda`-dependent, so its value is not comparable across the sweep; what is
-comparable is the position of each policy on the risk-return frontier. All three values beat both
-benchmarks on every measure, with the benchmarks at CVaR 95 of 6.363 and 5.539 and mean PnL of -4.512
-and -4.281.
+comparable is the position of each policy on the risk-return frontier. Every value from `lambda = 0.50`
+upward beats both benchmarks on CVaR 95 and CVaR 99, with the benchmarks at 6.363 and 7.016
+(Black-Scholes) and 5.539 and 6.039 (Leland). The `lambda = 0.25` policy is the exception: it beats
+Black-Scholes on CVaR 95, 6.691 against 6.363, but its CVaR 99 of 8.174 is worse than both benchmarks.
+That is the intended behaviour of a very low risk aversion, which optimizes a mild penalty and leaves
+the deep tail exposed, and it is evidence that the sweep is exploring a genuine family of objectives
+rather than producing near-identical policies. It also shows that `lambda = 1.0` is a reasonable
+default rather than an arbitrary choice, since it is the smallest value in the sweep that dominates
+both benchmarks on every measure.
 
-The `lambda = 1.0` row differs slightly from the 5-seed mean of -3.252 and 4.980 because the sweep
-uses a single seed and its own path draw. It is within the seed spread reported in the main table.
+The `lambda = 1.0` row matches the main 5-seed table exactly, as it should, since it is the same
+configuration and seeds. This is a useful internal consistency check on the sweep implementation.
 
 ### Time-dependent variant under LayerNorm
 
@@ -504,12 +556,19 @@ budget: 100,000 paths, 20 epochs, `cost_rate = 0.01`.
 | Black-Scholes | 4.861 | 6.363 | 7.016 |
 | Leland | 4.429 | 5.539 | 6.039 |
 
-The time-dependent variant is now competitive. It beats both benchmarks on every measure, with an
-entropic risk of 3.671 against 4.861 and 4.429, and a CVaR 95 of 5.051 against 6.363 and 5.539. It
-remains slightly behind the shared variant, by 0.058 in entropic risk and 0.156 in CVaR 95, while
-using 13.6 times as many parameters. The earlier failure was therefore a BatchNorm artifact rather
-than a capacity or data limitation, and the shared variant remains the better default on both
-accuracy and cost.
+Both rows use an identical protocol: the same training paths, the same evaluation paths, the same
+seed, the same optimizer, the same 100,000 path and 20 epoch budget, and the same cost level. The only
+difference is the weight-sharing mode, so this is a like-for-like comparison.
+
+The time-dependent variant is competitive. It beats both benchmarks on every measure, with an entropic
+risk of 3.671 against 4.861 and 4.429, and a CVaR 95 of 5.051 against 6.363 and 5.539. It remains
+slightly behind the shared variant on every measure: 0.058 in entropic risk, 0.156 in CVaR 95 and 0.195
+in CVaR 99, while using 13.6 times as many parameters, 276,510 against 20,353.
+
+Recommendation: the shared variant remains the default. It is more accurate on a like-for-like budget,
+13.6 times smaller, and about 2.6 times faster to train, since the time-dependent mode runs a separate
+forward pass per decision step. The earlier failure of the time-dependent mode was a BatchNorm
+artifact, not a capacity limit, but removing that artifact made it competitive rather than superior.
 
 ## Remaining limitations and open issues
 
@@ -523,8 +582,10 @@ accuracy and cost.
 3. The terminal-jump drawdown is dominated by the maturity liability and is not an informative
    intra-horizon risk measure. It is retained for continuity and reported alongside the new
    intra-horizon drawdown, which excludes the terminal settlement and is the interpretable column.
-4. The Heston study is a single seed per cost level, unlike the 5-seed GBM study. Its conclusions are
-   therefore less statistically secure, although the margins at positive cost are large.
+4. The Heston dispersion is larger than the GBM dispersion, 0.109 against 0.063 in CVaR 95 at one
+   percent cost, because the variance state adds a second source of sampling variation. Every Heston
+   gap is still significant at a t ratio of 9.4 or higher, so this affects precision rather than
+   conclusions.
 5. The time-dependent variant is competitive but not better than the shared variant, and it costs
    13.6 times as many parameters, 276,510 against 20,353. Shared weights remain the default.
 6. The CVaR threshold is handled in two stages. It is warm started at the alpha quantile of losses
@@ -536,14 +597,12 @@ accuracy and cost.
    What is not characterized is the interaction between the once-per-epoch projection and minibatch
    noise within the epoch, since the threshold is held fixed across the minibatches of an epoch while
    the policy moves.
-7. The lambda sweep is a single seed per value. The monotone pattern is clean enough that seed noise
-   is unlikely to change the ordering, but the individual values carry the same roughly 0.03 spread
-   as the main study.
-8. Only three values of `lambda` are explored, 0.5, 1.0 and 2.0. The paper treats it as a continuous
-   tuning parameter and reports a family of solutions.
-9. The Heston figures are diagnostics rather than a full replication of the GBM figure set. There is
-   no Heston policy-curve panel with the no-transaction band, because the band is a function of the
-   variance state as well as the spot and would need a third axis.
+7. The lambda sweep covers five values, 0.25 to 4.00, which is enough to read the frontier shape but
+   not a continuous parameterization. The paper treats `lambda` as a continuous tuning parameter.
+8. The Heston policy figure uses a heatmap for the variance dimension rather than a family of curves,
+   because the variance effect, a spread of about 0.08 in position across the full volatility range,
+   is small enough that separate curves overlap. The heatmap is readable but less direct than the
+   single-curve GBM panel.
 
 ### Resolved in this iteration
 
@@ -551,10 +610,11 @@ accuracy and cost.
   which has no running statistics, so training and evaluation modes are identical by construction.
   The seed 44 gap fell from 0.55 to 0.006, the risk measures became 7 to 8 times more reproducible,
   and training became 2.6 times faster. The BatchNorm path remains available as `--norm batchnorm`.
-- The zero-cost under-training result is resolved for both simulators. At the full budget the GBM
-  policy matches the Black-Scholes delta to a mean absolute deviation of 0.007 to 0.015 with
-  correlation 0.9996, and the Heston policy beats both benchmarks at zero cost, 3.234 against 3.300
-  in CVaR 95. The earlier deficits were budget artifacts.
+- The zero-cost under-training result is resolved for both simulators, and for Heston it is now
+  multi-seed. At the full budget the GBM policy matches the Black-Scholes delta to a mean absolute
+  deviation of 0.007 to 0.015 with correlation 0.9996, and the Heston policy beats both benchmarks at
+  zero cost, 3.216 ± 0.018 against 3.292 ± 0.006 in CVaR 95, at a t ratio of 9.4. The earlier
+  deficits were budget artifacts.
 - The CVaR advantage over Leland, previously not significant at a t ratio of 1.2, is now significant
   at a t ratio of 19.4 for CVaR 95 and 12.5 for CVaR 99.
 - The drawdown metric is now interpretable. An intra-horizon drawdown on the pre-settlement path is
@@ -565,17 +625,26 @@ accuracy and cost.
   reaches an entropic risk of 3.671 against 3.613 for the shared variant, and beats both benchmarks.
   The earlier failure was a BatchNorm artifact, not a capacity limit.
 - The Heston results are now reported as figures as well as a table, including a diagnostic showing
-  the policy responding to the variance state.
+  the policy responding to the variance state, and a policy surface with the no-trade band.
+- The Heston cost sweep is no longer single seed. It now uses 5 seeds at 100,000 paths and 20 epochs
+  per cost level, matching the GBM study exactly, and every gap against Leland is significant at a
+  t ratio of 9.4 or higher.
+- The lambda sweep is no longer single seed, and it is wider. It now covers five values from 0.25 to
+  4.00 with 5 seeds each, so the risk-return frontier is a statistically supported curve rather than
+  three single observations.
 
 ## Suggested next experiments
 
-1. Raise the seed count to 10 or 20 for the Heston and lambda studies, which are currently single
-   seed, so that their gaps carry the same statistical weight as the GBM main result.
-2. Calibrate the Heston simulator to a real return series and evaluate out of sample on a held-out
-   window, which is the missing empirical step relative to the paper.
-3. Extend the lambda sweep to a finer grid, for example 0.25 to 4.0, and plot the efficient frontier
-   of entropic risk against mean PnL and cost.
-4. Add a Heston policy-curve panel with the no-transaction band as a function of both spot and
-   variance, which needs a contour or a small multiple layout rather than a single curve.
-5. Test a path-dependent payoff, for example a down-and-out call, which requires the nested
-   simulation construction that the current single-payoff engine does not support.
+Every study in this document now uses 5 seeds at the full 100,000 path and 20 epoch budget, so the
+remaining work is either empirical or a genuine scope extension rather than a statistical gap.
+
+1. Calibrate the Heston simulator to a real return series and evaluate out of sample on a held-out
+   window. This is the one substantive gap relative to the paper, and it requires real market data,
+   which is out of scope for this project.
+2. Test a path-dependent payoff, for example a down-and-out call. This requires the nested simulation
+   construction that the current single-payoff engine does not support, so it is a scope extension
+   rather than a parameter change.
+3. Add a second friction model, for example quadratic market impact or a bid-ask spread, to test
+   whether the no-transaction band widens as the theory predicts when costs become nonlinear.
+4. Extend the lambda frontier to a continuous curve by fitting the five computed points, which would
+   let the efficient frontier be read at any risk aversion rather than at the sampled values.

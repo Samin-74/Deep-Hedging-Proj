@@ -470,6 +470,196 @@ def plot_pnl_paths(
     return _save(fig, path)
 
 
+def plot_lambda_frontier(
+    per_lambda: Mapping[str, Mapping[str, Mapping[str, Mapping[str, float]]]],
+    lambdas: Sequence[float],
+    results_path: str | Path,
+) -> Path:
+    # Risk return frontier across entropic risk aversion levels
+    if not lambdas:
+        raise ValueError("lambdas must not be empty")
+    path = _output(results_path, "lambda_frontier.png")
+    fig, axes = plt.subplots(1, 3, figsize=(17.4, 5.4))
+    left, middle, right = axes[0], axes[1], axes[2]
+
+    def series(key: str) -> tuple[list[float], list[float]]:
+        means, stds = [], []
+        for lam in lambdas:
+            entry = per_lambda[f"{lam:.4f}"]["summary"][key]
+            means.append(float(entry["mean"]))
+            stds.append(float(entry["std"]))
+        return means, stds
+
+    mean_pnl, mean_pnl_sd = series("mean_pnl")
+    cvar95, cvar95_sd = series("cvar_95")
+    cvar99, cvar99_sd = series("cvar_99")
+    cost, cost_sd = series("mean_cost")
+    std_pnl, std_pnl_sd = series("std_pnl")
+
+    left.errorbar(
+        mean_pnl,
+        cvar95,
+        xerr=mean_pnl_sd,
+        yerr=cvar95_sd,
+        color=COLORS["Deep Hedging"],
+        marker="o",
+        markersize=6,
+        linewidth=1.9,
+        capsize=3,
+        label="Deep Hedging",
+    )
+    for lam, x, y in zip(lambdas, mean_pnl, cvar95):
+        left.annotate(f"{lam:.2f}", xy=(x, y), xytext=(6, 6), textcoords="offset points", fontsize=8.5, color=TEXT_COLOR)
+    left.set_xlabel("Mean PnL")
+    left.set_ylabel("CVaR 95, loss basis")
+    left.set_title("Risk return frontier, labels are lambda")
+    left.legend(frameon=False, fontsize=9.0, loc="upper left")
+
+    middle.errorbar(
+        cost,
+        cvar95,
+        xerr=cost_sd,
+        yerr=cvar95_sd,
+        color=COLORS["Deep Hedging"],
+        marker="o",
+        markersize=6,
+        linewidth=1.9,
+        capsize=3,
+        label="Deep Hedging",
+    )
+    for lam, x, y in zip(lambdas, cost, cvar95):
+        middle.annotate(f"{lam:.2f}", xy=(x, y), xytext=(6, 6), textcoords="offset points", fontsize=8.5, color=TEXT_COLOR)
+    middle.set_xlabel("Mean transaction cost")
+    middle.set_ylabel("CVaR 95, loss basis")
+    middle.set_title("Cost against tail risk")
+    middle.legend(frameon=False, fontsize=9.0, loc="upper left")
+
+    right.errorbar(
+        lambdas,
+        std_pnl,
+        yerr=std_pnl_sd,
+        color=COLORS["Deep Hedging"],
+        marker="o",
+        markersize=6,
+        linewidth=1.9,
+        capsize=3,
+        label="Std of PnL",
+    )
+    right.errorbar(
+        lambdas,
+        cvar99,
+        yerr=cvar99_sd,
+        color=COLORS["Leland"],
+        marker="s",
+        markersize=6,
+        linewidth=1.9,
+        capsize=3,
+        label="CVaR 99",
+    )
+    right.set_xlabel("Entropic risk aversion lambda")
+    right.set_ylabel("Risk measure value")
+    right.set_title("Dispersion and tail risk against lambda")
+    right.legend(frameon=False, fontsize=9.0, loc="upper right")
+
+    for ax in axes:
+        _style(ax)
+    fig.tight_layout()
+    return _save(fig, path)
+
+
+def plot_heston_policy(
+    model,
+    config,
+    eval_spots: torch.Tensor,
+    eval_variances: torch.Tensor,
+    results_path: str | Path,
+    step: int | None = None,
+    vol_levels: Sequence[float] = (0.12, 0.20, 0.30),
+    prev_deltas: Sequence[float] = (-0.3, 0.0, 0.3),
+    spot_grid: int = 301,
+    span: float = 0.25,
+    no_trade_tol: float = 0.01,
+) -> Path:
+    # Heston policy surface: position against spot at fixed variance levels
+    path = _output(results_path, "heston_policy_curves.png")
+    step = model.n_steps // 2 if step is None else int(step)
+    if not 0 <= step < model.n_steps:
+        raise ValueError("step must lie in [0, n_steps)")
+    if not vol_levels:
+        raise ValueError("vol_levels must not be empty")
+    model.eval()
+    spots = torch.linspace(config.K * (1.0 - span), config.K * (1.0 + span), spot_grid)
+    x = spots.numpy()
+    tau = (config.n_steps - step) * config.dt
+    reference_bs = bs_delta(spots, config.K, config.r, config.benchmark_sigma, tau)
+
+    fig, axes = plt.subplots(1, 3, figsize=(17.4, 5.4))
+    left, middle, right = axes[0], axes[1], axes[2]
+
+    # Heatmap makes the variance dependence readable where curves overlap
+    vol_grid = np.linspace(0.08, 0.36, 57)
+    surface = np.zeros((vol_grid.size, spots.numel()))
+    for i, vol in enumerate(vol_grid):
+        variance = torch.full_like(spots, float(vol) ** 2)
+        with torch.no_grad():
+            surface[i] = model.policy_at_step(spots, step, 0.0, variance=variance).numpy()
+    mesh = left.pcolormesh(
+        spots.numpy(),
+        vol_grid,
+        surface,
+        cmap="viridis",
+        shading="auto",
+    )
+    bar = fig.colorbar(mesh, ax=left, pad=0.02)
+    bar.set_label("Hedge position")
+    bar.ax.tick_params(labelsize=8.5, colors=MUTED_COLOR)
+    for vol in vol_levels:
+        left.axhline(float(vol), color="white", linestyle=":", linewidth=1.2, alpha=0.85)
+    left.set_xlabel("Spot price at the decision date")
+    left.set_ylabel("Instantaneous volatility")
+    left.set_title(f"Heston position surface at step {step}, previous position 0")
+
+    for color, prev in zip(CURVE_COLORS, prev_deltas):
+        variance = torch.full_like(spots, float(vol_levels[len(vol_levels) // 2]) ** 2)
+        with torch.no_grad():
+            curve = model.policy_at_step(spots, step, float(prev), variance=variance)
+        middle.plot(
+            x,
+            curve.numpy(),
+            color=color,
+            linewidth=2.0,
+            label=f"Previous position {prev:.2f}",
+        )
+    middle.plot(x, reference_bs.numpy(), color=TEXT_COLOR, linestyle="--", linewidth=1.3, label="Black-Scholes delta")
+    middle.set_xlabel("Spot price at the decision date")
+    middle.set_ylabel("Hedge position")
+    middle.set_title(f"Previous position effect at volatility {vol_levels[len(vol_levels) // 2]:.2f}")
+    middle.legend(frameon=False, fontsize=8.6, loc="upper left")
+
+    right.axhspan(-no_trade_tol, no_trade_tol, color="#cbd5e0", alpha=0.55, zorder=0)
+    for color, prev in zip(CURVE_COLORS, prev_deltas):
+        variance = torch.full_like(spots, float(vol_levels[len(vol_levels) // 2]) ** 2)
+        with torch.no_grad():
+            curve = model.policy_at_step(spots, step, float(prev), variance=variance)
+        right.plot(
+            x,
+            (curve - float(prev)).numpy(),
+            color=color,
+            linewidth=2.0,
+            label=f"Previous position {prev:.2f}",
+        )
+    right.axhline(0.0, color=TEXT_COLOR, linewidth=0.9)
+    right.set_xlabel("Spot price at the decision date")
+    right.set_ylabel("Trade size")
+    right.set_title(f"No-trade band at tolerance {no_trade_tol:.2f}")
+    right.legend(frameon=False, fontsize=8.6, loc="upper left")
+
+    for ax in axes:
+        _style(ax)
+    fig.tight_layout()
+    return _save(fig, path)
+
+
 def plot_heston_diagnostics(
     spots: torch.Tensor,
     variances: torch.Tensor,

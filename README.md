@@ -59,8 +59,8 @@ python main.py --no-sensitivity --results-dir results_fast
 python main.py --seed 7 --deterministic
 python main.py --multi-seed
 python main.py --sensitivity-paths 100000 --sensitivity-epochs 20
-python heston_sweep.py 100000 20
-python lambda_sweep.py 0.5,1.0,2.0 100000 20
+python heston_multiseed.py 100000 20
+python lambda_multiseed.py 0.25,0.5,1.0,2.0,4.0 100000 20
 ```
 
 ## Multi-seed study
@@ -99,7 +99,9 @@ which is the interpretable one because the terminal version is dominated by the 
 | `position_dynamics.png` | Delta trajectories and position against moneyness over time |
 | `pnl_paths.png` | Cumulative PnL paths and per strategy bands |
 | `heston_cost_sensitivity.png` | Heston CVaR at 95 and 99 percent across cost levels |
+| `heston_policy_curves.png` | Heston position surface and the no-transaction band |
 | `heston_diagnostics.png` | Heston variance paths and the policy response to volatility |
+| `lambda_frontier.png` | Risk return frontier across entropic risk aversion levels |
 
 ## Notes
 
