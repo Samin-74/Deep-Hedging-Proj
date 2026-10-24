@@ -44,6 +44,8 @@ def hedge_pnl(
         cumulative = torch.cat(
             [torch.zeros_like(pnl).unsqueeze(1), step_pnl.cumsum(dim=1)], dim=1
         )
+        # Pre-settlement path excludes the terminal liability
+        result["pnl_path_pre"] = cumulative
         terminal = cumulative[:, -1:] - payoff.unsqueeze(1)
         result["pnl_path"] = torch.cat([cumulative[:, :-1], terminal], dim=1)
     return result

@@ -470,6 +470,104 @@ def plot_pnl_paths(
     return _save(fig, path)
 
 
+def plot_heston_diagnostics(
+    spots: torch.Tensor,
+    variances: torch.Tensor,
+    deep_deltas: torch.Tensor,
+    results_path: str | Path,
+    n_sample: int = 400,
+) -> Path:
+    # Heston variance dynamics and the policy response to the variance state
+    path = _output(results_path, "heston_diagnostics.png")
+    spots_cpu = torch.as_tensor(spots).detach().cpu()
+    var_cpu = torch.as_tensor(variances).detach().cpu()
+    deltas = torch.as_tensor(deep_deltas).detach().cpu()
+    if spots_cpu.shape != var_cpu.shape:
+        raise ValueError("spots and variances must share shape")
+    if deltas.shape[0] != spots_cpu.shape[0]:
+        raise ValueError("spots and deltas must share the path dimension")
+    steps = np.arange(spots_cpu.shape[1])
+    sample = torch.randperm(spots_cpu.shape[0])[: min(n_sample, spots_cpu.shape[0])].numpy()
+
+    fig, axes = plt.subplots(1, 3, figsize=(17.4, 5.4))
+    left, middle, right = axes[0], axes[1], axes[2]
+
+    for row in sample[:150]:
+        left.plot(steps, np.sqrt(var_cpu[row].numpy()), color=COLORS["Deep Hedging"], alpha=0.12, linewidth=0.8)
+    left.plot(steps, np.sqrt(var_cpu.mean(dim=0).numpy()), color=TEXT_COLOR, linewidth=2.2, label="Mean")
+    left.axhline(float(np.sqrt(var_cpu[:, 0].mean())), color="#718096", linestyle=":", linewidth=1.6, label="Initial level")
+    left.set_xlabel("Decision step")
+    left.set_ylabel("Instantaneous volatility")
+    left.set_title("Heston variance paths, square root scale")
+    left.legend(frameon=False, fontsize=9.0, loc="upper right")
+
+    vol_now = np.sqrt(var_cpu[:, :-1].numpy()).reshape(-1)
+    delta_now = deltas.numpy().reshape(-1)
+    keep = np.random.default_rng(0).choice(vol_now.size, size=min(6000, vol_now.size), replace=False)
+    scatter = middle.scatter(
+        vol_now[keep],
+        delta_now[keep],
+        c=np.tile(steps[:-1], deltas.shape[0])[keep],
+        cmap="viridis",
+        s=6,
+        alpha=0.5,
+        linewidths=0,
+    )
+    bar = fig.colorbar(scatter, ax=middle, pad=0.02)
+    bar.set_label("Decision step")
+    bar.ax.tick_params(labelsize=8.5, colors=MUTED_COLOR)
+    middle.set_xlabel("Instantaneous volatility")
+    middle.set_ylabel("Hedge position")
+    middle.set_title("Position against volatility, colored by time")
+
+    moneyness = (spots_cpu[:, :-1] / float(spots_cpu[:, :1].mean()) - 1.0).numpy().reshape(-1)
+    right.scatter(
+        moneyness[keep],
+        delta_now[keep],
+        c=vol_now[keep],
+        cmap="magma",
+        s=6,
+        alpha=0.5,
+        linewidths=0,
+    )
+    right.set_xlabel("Spot relative to initial level")
+    right.set_ylabel("Hedge position")
+    right.set_title("Position against moneyness, colored by volatility")
+
+    for ax in axes:
+        _style(ax)
+    fig.tight_layout()
+    return _save(fig, path)
+
+
+def plot_heston_cost_sweep(
+    records: Sequence[Mapping[str, float]],
+    results_path: str | Path,
+) -> Path:
+    # Heston CVaR across cost levels, same layout as the GBM study
+    if not records:
+        raise ValueError("records must not be empty")
+    path = _output(results_path, "heston_cost_sensitivity.png")
+    costs = [100.0 * float(r["cost"]) for r in records]
+    strategies = (
+        ("Deep Hedging", "deep"),
+        ("Black-Scholes", "bs"),
+        ("Leland", "leland"),
+    )
+    fig, axes = plt.subplots(1, 2, figsize=(12.8, 5.6))
+    for ax, quantile in zip(axes, (95, 99)):
+        for label, prefix in strategies:
+            values = [float(r[f"{prefix}_cvar_{quantile}"]) for r in records]
+            ax.plot(costs, values, marker="o", markersize=5.5, linewidth=1.9, color=COLORS[label], label=label)
+        ax.set_title(f"Heston CVaR at {quantile} percent confidence")
+        ax.set_xlabel("Proportional transaction cost (percent)")
+        ax.set_ylabel("CVaR of terminal PnL, loss basis")
+        _style(ax)
+    axes[0].legend(frameon=False, fontsize=9.0, loc="upper left")
+    fig.tight_layout()
+    return _save(fig, path)
+
+
 def plot_training_loss(
     history: Sequence[float],
     results_path: str | Path,

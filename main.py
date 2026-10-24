@@ -13,6 +13,7 @@ from src.loss import (
     CVaRLoss,
     EntropicRiskLoss,
     empirical_cvar,
+    summarize_drawdown,
     summarize_pnl,
     var_threshold,
 )
@@ -191,6 +192,7 @@ def run_policy(
     model.eval()
     pnls: list[torch.Tensor] = []
     paths: list[torch.Tensor] = []
+    pre_paths: list[torch.Tensor] = []
     with torch.no_grad():
         for start in range(0, spots.shape[0], chunk):
             sl = slice(start, start + chunk)
@@ -200,7 +202,10 @@ def run_policy(
             pnls.append(result["pnl"])
             if return_path:
                 paths.append(result["pnl_path"])
-    return torch.cat(pnls), (torch.cat(paths) if return_path else None)
+                pre_paths.append(result["pnl_path_pre"])
+    if not return_path:
+        return torch.cat(pnls), None
+    return torch.cat(pnls), torch.cat(paths), torch.cat(pre_paths)
 
 
 def benchmark_results(
@@ -242,8 +247,26 @@ def comparison_rows(summaries: dict[str, dict[str, float]]) -> list[tuple[str, .
                 f"{summary['std']:8.3f}",
                 f"{summary['cvar_95']:8.3f}",
                 f"{summary['cvar_99']:8.3f}",
-                f"{summary['max_drawdown_worst']:8.3f}",
-                f"{summary['max_drawdown_mean']:8.3f}",
+                f"{summary['dd_intra_mean']:8.3f}",
+                f"{summary['dd_intra_worst']:8.3f}",
+            )
+        )
+    return rows
+
+
+def drawdown_rows(summaries: dict[str, dict[str, float]]) -> list[tuple[str, ...]]:
+    # Terminal-jump and intra-horizon drawdown side by side
+    rows: list[tuple[str, ...]] = []
+    for name in STRATEGIES:
+        s = summaries[name]
+        rows.append(
+            (
+                name,
+                f"{s['dd_terminal_mean']:8.3f}",
+                f"{s['dd_terminal_worst']:8.3f}",
+                f"{s['dd_intra_mean']:8.3f}",
+                f"{s['dd_intra_p95']:8.3f}",
+                f"{s['dd_intra_worst']:8.3f}",
             )
         )
     return rows
@@ -289,12 +312,27 @@ def print_comparison(summaries: dict[str, dict[str, float]]) -> None:
         "Std",
         "CVaR 95",
         "CVaR 99",
-        "Max DD worst",
-        "Max DD mean",
+        "Intra DD mean",
+        "Intra DD worst",
     )
     print()
     print("Terminal PnL statistics on the evaluation set")
     print(format_table(headers, comparison_rows(summaries)))
+    print()
+    print("Drawdown: terminal jump includes the maturity liability, intra excludes it")
+    print(
+        format_table(
+            (
+                "Strategy",
+                "Term DD mean",
+                "Term DD worst",
+                "Intra DD mean",
+                "Intra DD p95",
+                "Intra DD worst",
+            ),
+            drawdown_rows(summaries),
+        )
+    )
 
 
 def print_diagnostics(summaries: dict[str, dict[str, float]]) -> None:
@@ -309,9 +347,15 @@ def print_diagnostics(summaries: dict[str, dict[str, float]]) -> None:
         )
 
 
-def extra_summary(pnl: torch.Tensor, pnl_path: torch.Tensor | None) -> dict[str, float]:
+def extra_summary(
+    pnl: torch.Tensor,
+    pnl_path: torch.Tensor | None,
+    pnl_path_pre: torch.Tensor | None = None,
+) -> dict[str, float]:
     summary = summarize_pnl(pnl, pnl_path)
     summary["median"] = float(pnl.median())
+    if pnl_path is not None and pnl_path_pre is not None:
+        summary.update(summarize_drawdown(pnl_path, pnl_path_pre))
     return summary
 
 
@@ -440,12 +484,14 @@ def main() -> int:
     if np.isfinite(init_w):
         print(f"CVaR threshold: initial {init_w:.4f}")
 
-    deep_pnl, deep_path = run_policy(model, eval_spots, eval_var, config)
+    deep_pnl, deep_path, deep_pre = run_policy(model, eval_spots, eval_var, config)
     benches = benchmark_results(eval_spots, config)
 
-    summaries = {"Deep Hedging": extra_summary(deep_pnl, deep_path)}
+    summaries = {"Deep Hedging": extra_summary(deep_pnl, deep_path, deep_pre)}
     for name, payload in benches.items():
-        summaries[name] = extra_summary(payload["pnl"], payload["pnl_path"])
+        summaries[name] = extra_summary(
+            payload["pnl"], payload["pnl_path"], payload["pnl_path_pre"]
+        )
 
     print_comparison(summaries)
     print_diagnostics(summaries)

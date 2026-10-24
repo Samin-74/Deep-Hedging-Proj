@@ -59,7 +59,8 @@ python main.py --no-sensitivity --results-dir results_fast
 python main.py --seed 7 --deterministic
 python main.py --multi-seed
 python main.py --sensitivity-paths 100000 --sensitivity-epochs 20
-python heston_sweep.py 20000 10
+python heston_sweep.py 100000 20
+python lambda_sweep.py 0.5,1.0,2.0 100000 20
 ```
 
 ## Multi-seed study
@@ -84,7 +85,9 @@ the earlier behaviour.
 ## Outputs
 
 The run prints a comparison table with mean PnL, standard deviation, 95 and 99 percent CVaR and
-maximum drawdown, then writes figures to `results/`:
+drawdown, then writes figures to `results/`. Drawdown is reported twice: a terminal-jump version that
+includes the maturity liability, and an intra-horizon version computed on the pre-settlement path,
+which is the interpretable one because the terminal version is dominated by the common payoff.
 
 | File | Content |
 | --- | --- |
@@ -95,6 +98,8 @@ maximum drawdown, then writes figures to `results/`:
 | `learning_curves.png` | PnL distribution function and risk profile across confidence levels |
 | `position_dynamics.png` | Delta trajectories and position against moneyness over time |
 | `pnl_paths.png` | Cumulative PnL paths and per strategy bands |
+| `heston_cost_sensitivity.png` | Heston CVaR at 95 and 99 percent across cost levels |
+| `heston_diagnostics.png` | Heston variance paths and the policy response to volatility |
 
 ## Notes
 

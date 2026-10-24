@@ -57,6 +57,16 @@ def max_drawdown(paths: torch.Tensor) -> torch.Tensor:
     return (running_max - paths).max(dim=1).values
 
 
+def intrahorizon_drawdown(paths: torch.Tensor) -> torch.Tensor:
+    # Peak to trough decline before the terminal liability is booked
+    if paths.dim() != 2:
+        raise ValueError("paths must be a 2D tensor")
+    if paths.shape[1] < 2:
+        raise ValueError("paths must have at least two columns")
+    running_max = torch.cummax(paths, dim=1).values
+    return (running_max - paths).max(dim=1).values
+
+
 def summarize_pnl(pnl: torch.Tensor, pnl_path: torch.Tensor | None = None) -> dict[str, float]:
     summary = {
         "mean": float(pnl.mean()),
@@ -74,3 +84,22 @@ def summarize_pnl(pnl: torch.Tensor, pnl_path: torch.Tensor | None = None) -> di
         summary["max_drawdown_p95"] = float(torch.quantile(dd, 0.95))
         summary["max_drawdown_worst"] = float(dd.max())
     return summary
+
+
+def summarize_drawdown(
+    pnl_path: torch.Tensor,
+    pnl_path_pre: torch.Tensor,
+) -> dict[str, float]:
+    # Terminal-jump drawdown and intra-horizon drawdown side by side
+    if pnl_path.shape != pnl_path_pre.shape:
+        raise ValueError("pnl_path and pnl_path_pre must share shape")
+    terminal = max_drawdown(pnl_path)
+    intra = intrahorizon_drawdown(pnl_path_pre)
+    return {
+        "dd_terminal_mean": float(terminal.mean()),
+        "dd_terminal_p95": float(torch.quantile(terminal, 0.95)),
+        "dd_terminal_worst": float(terminal.max()),
+        "dd_intra_mean": float(intra.mean()),
+        "dd_intra_p95": float(torch.quantile(intra, 0.95)),
+        "dd_intra_worst": float(intra.max()),
+    }
