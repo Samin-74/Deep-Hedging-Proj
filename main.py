@@ -57,6 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lambda-entropic", type=float, default=None)
     parser.add_argument("--cvar-alpha", type=float, default=None)
     parser.add_argument("--time-dependent", action="store_true", default=None)
+    parser.add_argument("--norm", choices=("layernorm", "batchnorm"), dest="norm_type", default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--deterministic", action="store_true", default=None)
     parser.add_argument("--device", default=None)
@@ -104,6 +105,7 @@ def build_model(config: Config) -> DeepHedgingNetwork:
         hidden_dim=config.hidden_dim,
         n_layers=config.n_layers,
         time_dependent=config.time_dependent,
+        norm_type=config.norm_type,
     ).to(config.device)
 
 

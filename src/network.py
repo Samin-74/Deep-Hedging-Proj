@@ -46,9 +46,25 @@ class FlooredBatchNorm1d(nn.BatchNorm1d):
         return out
 
 
+def make_norm(norm_type: str, dim: int) -> nn.Module:
+    # LayerNorm has no running statistics, so train and eval agree exactly
+    if norm_type == "layernorm":
+        return nn.LayerNorm(dim)
+    if norm_type == "batchnorm":
+        return FlooredBatchNorm1d(dim)
+    raise ValueError(f"Unknown norm_type: {norm_type}")
+
+
 class MLP(nn.Module):
-    # Linear + BatchNorm + LeakyReLU stack
-    def __init__(self, in_dim: int, hidden_dim: int, n_layers: int, out_dim: int = 1) -> None:
+    # Linear + normalization + LeakyReLU stack
+    def __init__(
+        self,
+        in_dim: int,
+        hidden_dim: int,
+        n_layers: int,
+        out_dim: int = 1,
+        norm_type: str = "layernorm",
+    ) -> None:
         super().__init__()
         layers: list[nn.Module] = []
         dim = in_dim
@@ -56,7 +72,7 @@ class MLP(nn.Module):
             layers.extend(
                 [
                     nn.Linear(dim, hidden_dim),
-                    FlooredBatchNorm1d(hidden_dim),
+                    make_norm(norm_type, hidden_dim),
                     nn.LeakyReLU(0.2),
                 ]
             )
@@ -71,9 +87,15 @@ class MLP(nn.Module):
 
 
 class SharedTimeMLP(nn.Module):
-    # Shared linear weights with per-step batch normalization
+    # Shared linear weights with per-step normalization
     def __init__(
-        self, in_dim: int, hidden_dim: int, n_layers: int, n_steps: int, out_dim: int = 1
+        self,
+        in_dim: int,
+        hidden_dim: int,
+        n_layers: int,
+        n_steps: int,
+        out_dim: int = 1,
+        norm_type: str = "layernorm",
     ) -> None:
         super().__init__()
         self.linears = nn.ModuleList()
@@ -82,7 +104,7 @@ class SharedTimeMLP(nn.Module):
         for _ in range(n_layers):
             self.linears.append(nn.Linear(dim, hidden_dim))
             self.norms.append(
-                nn.ModuleList([FlooredBatchNorm1d(hidden_dim) for _ in range(n_steps)])
+                nn.ModuleList([make_norm(norm_type, hidden_dim) for _ in range(n_steps)])
             )
             dim = hidden_dim
         self.head = nn.Linear(dim, out_dim)
@@ -110,12 +132,15 @@ class DeepHedgingNetwork(nn.Module):
         n_layers: int = 3,
         time_dependent: bool = False,
         feature_dim: int = 6,
+        norm_type: str = "layernorm",
     ) -> None:
         super().__init__()
         if n_steps < 1:
             raise ValueError("n_steps must be positive")
         if base_variance <= 0.0:
             raise ValueError("base_variance must be positive")
+        if norm_type not in {"layernorm", "batchnorm"}:
+            raise ValueError("norm_type must be 'layernorm' or 'batchnorm'")
         self.n_steps = int(n_steps)
         self.K = float(K)
         self.T = float(T)
@@ -124,15 +149,21 @@ class DeepHedgingNetwork(nn.Module):
         self.max_position = float(max_position)
         self.time_dependent = bool(time_dependent)
         self.feature_dim = int(feature_dim)
+        self.norm_type = str(norm_type)
 
         if self.time_dependent:
             self.nets = nn.ModuleList(
-                [MLP(feature_dim, hidden_dim, n_layers) for _ in range(self.n_steps)]
+                [
+                    MLP(feature_dim, hidden_dim, n_layers, norm_type=self.norm_type)
+                    for _ in range(self.n_steps)
+                ]
             )
             self.shared = None
         else:
             self.nets = None
-            self.shared = SharedTimeMLP(feature_dim, hidden_dim, n_layers, self.n_steps)
+            self.shared = SharedTimeMLP(
+                feature_dim, hidden_dim, n_layers, self.n_steps, norm_type=self.norm_type
+            )
 
     def _delta_from_features(self, step: int, features: torch.Tensor) -> torch.Tensor:
         if self.time_dependent:

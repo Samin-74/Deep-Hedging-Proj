@@ -32,6 +32,7 @@ class Config:
     hidden_dim: int = 64
     n_layers: int = 3
     time_dependent: bool = False
+    norm_type: str = "layernorm"
     max_position: float = 2.0
 
     # Simulator
@@ -127,6 +128,8 @@ class Config:
             raise ValueError("heston_rho must lie in [-1, 1]")
         if self.max_position <= 0.0:
             raise ValueError("max_position must be positive")
+        if self.norm_type not in {"layernorm", "batchnorm"}:
+            raise ValueError("norm_type must be 'layernorm' or 'batchnorm'")
         if not self.results_dir:
             raise ValueError("results_dir must not be empty")
         if self.run_cost_sensitivity:

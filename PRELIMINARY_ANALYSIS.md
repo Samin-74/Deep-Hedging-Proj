@@ -14,13 +14,18 @@ so all three strategies are scored on identical paths and an identical cost stru
 The canonical run is configured as `S0 = K = 100`, `T = 30/365`, `n_steps = 30`, `n_paths = 100000`,
 `n_eval_paths = 100000`, `r = 0`, `sigma = 0.2`, `cost_rate = 0.01`, `batch_size = 256`, `epochs = 20`,
 `lr = 0.001`, `lambda_entropic = 1.0`, shared weights across time, 3 hidden layers of 64 units,
-20,353 policy parameters, seed 42. Training took 510 s and the full run 664 s on CPU.
+20,353 policy parameters, seed 42. Training takes about 198 s and the full run about 1030 s on CPU.
 
-The headline results are now reported from a 5-seed study (seeds 42, 43, 44, 45, 46) rather than from
-the single canonical run. Each seed is a complete train and evaluate cycle at the same budget, and the
-main table reports mean $\pm$ sample standard deviation across the 5 seeds. The canonical seed 42 run
-is retained unchanged and remains the source of every figure in `results/`. The study took 3057 s and
-writes `results/multiseed_summary.json`.
+The headline results are reported from a 5-seed study (seeds 42, 43, 44, 45, 46). Each seed is a
+complete train and evaluate cycle at the same budget, and the main table reports mean $\pm$ sample
+standard deviation across the 5 seeds. The study took 989 s and writes
+`results/multiseed_layernorm.json`.
+
+Normalization was changed from per-step BatchNorm to LayerNorm after the first 5-seed study exposed a
+train and evaluation mismatch. LayerNorm has no running statistics, so the policy evaluated in
+training mode and in evaluation mode is identical by construction. This removed the mismatch, cut the
+seed-to-seed standard deviation of the risk measures by roughly a factor of 7, and made training about
+2.6 times faster. The BatchNorm path is retained behind `--norm batchnorm` for comparison.
 
 Status: methodology and qualitative claims reproduce. Empirical coverage is partial, see the verdict.
 
@@ -74,9 +79,13 @@ and evaluates the Black-Scholes delta at $\sigma_L$ instead of $\sigma$.
 - The two headline qualitative predictions reproduce. First, the learned policy sits inside the
   Black-Scholes delta away from the boundaries, which is the discrete-time no-transaction band.
   Second, the advantage over analytic deltas grows with the cost level.
-- The zero-cost limit reproduces. In an auxiliary zero-cost run at `lambda = 50` the learned policy
-  beat the Black-Scholes delta on entropic risk (4.005 against 4.114) and the mean absolute deviation
-  from the Black-Scholes delta was 0.045, 0.030 and 0.063 at decision steps 5, 15 and 25.
+- The zero-cost limit reproduces at the full budget. With `cost_rate = 0` the learned policy matches
+  the Black-Scholes delta to a mean absolute deviation of 0.0071, 0.0105 and 0.0148 at decision steps
+  5, 15 and 25, with correlations of 0.9985, 0.9994 and 0.9996, and matches or slightly beats both
+  benchmarks on CVaR 95 and CVaR 99.
+- The advantage over both benchmarks is statistically unambiguous after the normalization fix. Over 5
+  seeds the t ratios against Leland are 40.7 for mean PnL, 42.8 for cost, 62.1 for entropic risk, 19.4
+  for CVaR 95 and 12.5 for CVaR 99.
 
 ### What is missing or approximated
 
@@ -91,11 +100,11 @@ and evaluates the Black-Scholes delta at $\sigma_L$ instead of $\sigma$.
   network capacity beyond the empirical comparison of shared and time-dependent weights.
 - The architecture is a reasonable analogue, not the paper's exact network. The paper reports a
   feedforward body with a recurrent pass of the previous position; here the shared variant shares all
-  linear weights across time but keeps per-step batch normalization statistics, and the
-  time-dependent variant trains a separate MLP per step.
-- Seed dispersion is larger than the smallest reported gaps. The headline table is a 5-seed mean
-  $\pm$ standard deviation, which is enough to establish the mean PnL, cost and entropic advantages
-  over Leland but not enough to resolve the CVaR advantage; see the significance table below.
+  linear weights across time but keeps per-step normalization statistics, and the time-dependent
+  variant trains a separate MLP per step.
+- Normalization is LayerNorm rather than the paper's BatchNorm. This was a deliberate change, made
+  because per-step BatchNorm produced a train and evaluation mismatch that inflated the seed variance
+  by a factor of 7. The BatchNorm path is retained behind `--norm batchnorm` for comparison.
 - Only a European call is hedged. The paper's framework covers path-dependent and exotic payoffs, and
   the nested-simulation construction needed for those is absent.
 - One friction model only. Proportional costs are implemented; no quadratic impact, no bid-ask
@@ -114,14 +123,14 @@ Three overlaid terminal PnL histograms on 100,000 evaluation paths, with each st
 by a dashed vertical line and the legend reporting mean and 95 percent CVaR (loss basis).
 
 The learned policy shifts the whole distribution to the right rather than reshaping its tails: mean
-PnL improves from -4.51 (Black-Scholes) and -4.28 (Leland) to -3.18, and CVaR 95 falls from 6.36 to
-4.98. The Black-Scholes and Leland histograms are concentrated in a narrow band near -4.5 to -4.3,
+PnL improves from -4.51 (Black-Scholes) and -4.28 (Leland) to -3.32, and CVaR 95 falls from 6.36 to
+4.90. The Black-Scholes and Leland histograms are concentrated in a narrow band near -4.5 to -4.3,
 which is the deterministic cost drag, while the deep hedging histogram is visibly wider and reaches
 into the region above -1.0. This is the expected signature of a policy that trades less but carries
 more residual risk: it buys a better mean at the price of higher dispersion, since standard deviation
-rises from 0.757 to 0.930. Both the mean shift and the dispersion increase are stable features: over 5
-seeds the learned policy's mean PnL is -3.235 $\pm$ 0.043 and its standard deviation is
-0.973 $\pm$ 0.151.
+rises from 0.757 to 0.776. Both the mean shift and the dispersion increase are stable features: over 5
+seeds the learned policy's mean PnL is -3.252 $\pm$ 0.056 and its standard deviation is
+0.823 $\pm$ 0.044.
 
 This matches the paper's claim. The objective is a risk measure of terminal PnL under frictions, and
 the optimum sacrifices some variance reduction to reduce cost. It also shows why reporting only the
@@ -156,36 +165,38 @@ trustworthy than their shape. The left panel, computed only on realized paths, i
 ### `cost_sensitivity.png`
 
 95 and 99 percent CVaR of the three strategies at cost levels 0.00, 0.10, 0.50 and 1.00 percent. The
-policy is retrained from scratch at every cost level on 20,000 paths for 8 epochs, and all strategies
-are scored on the same 20,000 path set.
+policy is retrained from scratch at every cost level at the full main-run budget, 100,000 paths and 20
+epochs, and all strategies are scored on the same 100,000 path set.
 
-Deep hedging is best at the highest cost and worst at zero cost. At 1.00 percent its 95 percent CVaR
-is 5.105 against 6.358 for Black-Scholes and 5.532 for Leland. At 0.50 percent it is 4.611, close to
-Leland's 4.380 and clearly better than Black-Scholes. At 0.00 percent it is 3.611 against 3.111 for
-both analytic deltas, so the ordering reverses and the learned policy is about 0.5 worse.
+Deep hedging is best at every cost level, and the margin grows with cost. At 1.00 percent its 95
+percent CVaR is 5.023 against 6.363 for Black-Scholes and 5.539 for Leland. At 0.50 percent it is
+4.157 against 4.707 and 4.390. At 0.00 percent it is 3.110 against 3.127 for both analytic deltas, so
+it matches them to within 0.02 and is marginally ahead.
 
-The qualitative shape matches the paper, since the benefit of learning is increasing in the friction
-level. The low-cost end does not. With zero costs the theoretical optimum is the Black-Scholes delta
-and the learned policy should match it, not underperform it. The most likely explanation is the
-reduced training budget of this study, 8 epochs against 20 in the main run, so the network has not
-converged and its approximation error is exposed once there is no cost pressure to exploit. This is
-an open item, not a contradiction of the paper.
+The shape matches the paper at both ends. The benefit of learning increases with the friction level,
+which is the central qualitative prediction, and at zero cost the learned policy recovers the
+Black-Scholes delta rather than underperforming it. The zero-cost delta deviation is 0.007 to 0.015
+with correlation 0.9996, so the theoretical limit is reproduced. An earlier version of this figure,
+run at 20,000 paths and 8 epochs, showed the learned policy about 0.5 worse at zero cost; that was
+under-training and is now resolved.
 
 ### `training_loss.png`
 
 Epoch-level training risk over the 20 epochs of the canonical run, with a 3 epoch moving average.
 
-Risk falls from 4.6830 to 3.5799. About 82 percent of the total reduction is achieved by epoch 2 and
-about 87 percent by epoch 4, after which progress is slow and slightly noisy: epochs 9, 14 and 17 are
+Risk falls from 3.9649 to 3.6185. About 63 percent of the total reduction is achieved by epoch 2 and
+about 82 percent by epoch 4, after which progress is slow and slightly noisy: epochs 7, 18 and 19 are
 marginally above their predecessors. The curve is monotone in trend at the scale reported, with a
-residual spread of about 0.04 over the second half.
+residual spread of about 0.01 over the second half.
 
 This is consistent with the paper's reported behaviour, where the policy improves rapidly and then
-flattens. It also shows the run is converged at 20 epochs in the sense that further training yields
-little, which matters for the cost study where only 8 epochs were used. The absence of a held-out
-training curve means overfitting cannot be assessed from this figure alone. Overfitting is unlikely
-here because the training set has 100,000 paths against 20,353 parameters, but this is an argument,
-not evidence.
+flattens. The curve is noticeably smoother than the BatchNorm version, which had a residual spread of
+about 0.04 over the same span, because LayerNorm removes the batch-statistic noise from the objective.
+The run is converged at 20 epochs in the sense that further training yields little. The absence of a
+held-out training curve means overfitting cannot be assessed from this figure alone. Overfitting is
+unlikely here because the training set has 100,000 paths against 20,353 parameters, and the earlier
+diagnostic showed evaluation risk on fresh paths matching evaluation risk on training paths to within
+0.006, but this is an argument rather than a formal test.
 
 ### `learning_curves.png`
 
@@ -197,8 +208,8 @@ almost the entire support, which is first order stochastic dominance on the real
 dominance is strict in the body and narrows in the extreme lower tail below about -7.0, where the
 three curves converge, consistent with all strategies facing the same unbounded liability.
 
-The right panel quantifies the same fact across confidence levels: 3.94 against 5.11 (Black-Scholes)
-and 4.66 (Leland) at 50 percent, 4.97 against 6.36 and 5.54 at 95 percent, and 5.53 against 7.02 and
+The right panel quantifies the same fact across confidence levels: 3.86 against 5.11 (Black-Scholes)
+and 4.66 (Leland) at 50 percent, 4.90 against 6.36 and 5.54 at 95 percent, and 5.41 against 7.02 and
 6.04 at 99 percent. The ordering and the sizes of the gaps are stable, so the improvement is not an
 artifact of one particular confidence level.
 
@@ -213,11 +224,11 @@ Left: 120 sampled position trajectories through the 30 decision steps, with the 
 each strategy. Right: every position against spot relative to the initial level, colored by decision
 step, over 1,500 sampled paths.
 
-The mean trajectory starts at about 0.39, rises to roughly 0.50 within four steps and then stays flat
-near 0.49 to the end. The Black-Scholes and Leland mean deltas are essentially constant at 0.51 over
+The mean trajectory starts at about 0.40, rises to roughly 0.50 within four steps and then stays flat
+near 0.50 to the end. The Black-Scholes and Leland mean deltas are essentially constant at 0.51 over
 the whole horizon, which is correct at the money with `r = 0` since the delta of an at-the-money call
-is close to 0.5 until the last step. The learned mean sits deliberately below them, and the gap of
-about 0.02 is the average amount of hedging the policy declines to do.
+is close to 0.5 until the last step. The learned mean sits slightly below them, and the small gap is
+the average amount of hedging the policy declines to do.
 
 The right panel shows the position is a smooth monotone function of spot with almost no residual
 dependence on the decision step: the color gradient runs along the curve rather than across it. In
@@ -258,7 +269,7 @@ mean $\pm$ standard deviation over 5 independent seeds.
 
 | Strategy | Mean PnL | Std | CVaR 95 | CVaR 99 | Entropic | Mean cost |
 | --- | --- | --- | --- | --- | --- | --- |
-| Deep Hedging | -3.235 ± 0.043 | 0.973 ± 0.151 | 5.272 ± 0.461 | 5.932 ± 0.606 | 3.749 ± 0.237 | 0.950 ± 0.047 |
+| Deep Hedging | -3.252 ± 0.056 | 0.823 ± 0.044 | 4.980 ± 0.063 | 5.542 ± 0.086 | 3.600 ± 0.030 | 0.967 ± 0.054 |
 | Black-Scholes | -4.511 ± 0.001 | 0.756 ± 0.001 | 6.352 ± 0.009 | 7.013 ± 0.016 | 4.859 ± 0.004 | 2.225 ± 0.002 |
 | Leland | -4.280 ± 0.002 | 0.511 ± 0.001 | 5.529 ± 0.007 | 6.026 ± 0.012 | 4.427 ± 0.002 | 1.994 ± 0.001 |
 
@@ -270,41 +281,52 @@ Per-seed values for the learned policy, showing where the dispersion comes from:
 
 | Seed | Mean PnL | Std | CVaR 95 | CVaR 99 | Entropic | Mean cost |
 | --- | --- | --- | --- | --- | --- | --- |
-| 42 | -3.170 | 0.930 | 4.968 | 5.530 | 3.593 | 0.883 |
-| 43 | -3.260 | 0.840 | 5.075 | 5.821 | 3.639 | 0.974 |
-| 44 | -3.272 | 1.203 | 6.013 | 6.939 | 4.134 | 0.995 |
-| 45 | -3.210 | 0.853 | 4.886 | 5.403 | 3.564 | 0.921 |
-| 46 | -3.263 | 1.041 | 5.420 | 5.966 | 3.815 | 0.978 |
+| 42 | -3.315 | 0.776 | 4.895 | 5.410 | 3.613 | 1.029 |
+| 43 | -3.266 | 0.787 | 4.944 | 5.501 | 3.586 | 0.980 |
+| 44 | -3.207 | 0.848 | 5.001 | 5.616 | 3.580 | 0.928 |
+| 45 | -3.291 | 0.818 | 5.061 | 5.601 | 3.646 | 1.001 |
+| 46 | -3.181 | 0.885 | 5.000 | 5.585 | 3.574 | 0.898 |
 
 ### What the multi-seed study changes
 
-The multi-seed study increases the statistical reliability of the reported gaps, and it changes one
-conclusion. Using the standard error of the mean across seeds, $\mathrm{SE} = s/\sqrt{5}$, the gaps
-against Leland are:
+The multi-seed study increases the statistical reliability of the reported gaps. Using the standard
+error of the mean across seeds, $\mathrm{SE} = s/\sqrt{5}$, the gaps against Leland are:
 
 | Metric | Gap, Leland minus Deep Hedging | Standard error | t ratio | Reliable |
 | --- | --- | --- | --- | --- |
-| Mean PnL | +1.045 | 0.019 | 53.8 | yes |
-| Mean cost | +1.043 | 0.021 | 49.9 | yes |
-| Entropic | +0.678 | 0.106 | 6.4 | yes |
-| CVaR 95 | +0.256 | 0.206 | 1.2 | no |
-| CVaR 99 | +0.094 | 0.271 | 0.3 | no |
+| Mean PnL | +1.027 | 0.025 | 40.7 | yes |
+| Mean cost | +1.026 | 0.024 | 42.8 | yes |
+| Entropic | +0.827 | 0.013 | 62.1 | yes |
+| CVaR 95 | +0.548 | 0.028 | 19.4 | yes |
+| CVaR 99 | +0.484 | 0.039 | 12.5 | yes |
 
-The cost reduction and the improvement in mean PnL and entropic risk are far outside the seed noise.
-The CVaR advantage over Leland is not. The single-seed canonical run showed a CVaR 95 gap of 0.571
-against Leland, which the 5-seed study revises down to 0.256 with a standard error of 0.206. The
-correct reading is that deep hedging matches Leland on CVaR and beats it on mean PnL, entropic risk
-and cost, not that it dominates on every measure. Against Black-Scholes the CVaR 95 gap of 1.080 has
-a t ratio of 5.2 and remains reliable.
+Every gap against Leland is now far outside the seed noise, including both CVaR measures. Against
+Black-Scholes the t ratios are 49.9 for mean PnL, 52.4 for cost, 94.4 for entropic risk, 48.5 for
+CVaR 95 and 38.1 for CVaR 99. The learned policy therefore dominates both analytic benchmarks on
+every reported risk measure and on cost, and the dominance is statistically unambiguous.
 
-Seed 44 is the source of most of the dispersion: its entropic risk is 4.134 against a range of 3.564
-to 3.815 for the other four. Excluding it, the learned policy's entropic risk is 3.653 $\pm$ 0.113
-and CVaR 95 is 5.087 $\pm$ 0.235. The cause was isolated and is a BatchNorm train and evaluation
-discrepancy, not a training failure: for seed 44 the final minibatch training risk is 3.578, the
-evaluation risk on the training paths is 4.131, and the evaluation risk on fresh paths is 4.134. The
-policy is therefore not overfitting, since train and test agree; the batch statistics used during
-training simply differ from the running statistics used at evaluation. The same diagnostic on seed 42
-gives 3.580, 3.589 and 3.593, a gap of 0.013. This is recorded as an open issue below.
+### Effect of the normalization fix
+
+The first 5-seed study used per-step BatchNorm and produced a large train and evaluation mismatch on
+seed 44: the final minibatch training risk was 3.578 while the evaluation risk was 4.134, a gap of
+0.55, against 0.013 for seed 42. The cause was that BatchNorm normalizes with batch statistics during
+training but with lagged running statistics at evaluation, and the two diverge as the policy sharpens.
+Replacing it with LayerNorm, which has no running statistics, makes the two modes identical.
+
+| Metric | BatchNorm mean ± std | LayerNorm mean ± std | Std reduction |
+| --- | --- | --- | --- |
+| Mean PnL | -3.235 ± 0.043 | -3.252 ± 0.056 | 0.8x |
+| Std | 0.973 ± 0.151 | 0.823 ± 0.044 | 3.4x |
+| CVaR 95 | 5.272 ± 0.461 | 4.980 ± 0.063 | 7.3x |
+| CVaR 99 | 5.932 ± 0.606 | 5.542 ± 0.086 | 7.0x |
+| Entropic | 3.749 ± 0.237 | 3.600 ± 0.030 | 7.9x |
+| Mean cost | 0.950 ± 0.047 | 0.967 ± 0.054 | 0.9x |
+
+The risk measures became 7 to 8 times more reproducible and their means improved, since the BatchNorm
+version was being scored with statistics that did not match its training. Seed 44's entropic risk fell
+from 4.134 to 3.580, in line with the other seeds. The residual spread in mean PnL and mean cost is
+not a defect: it reflects genuine differences in how much each seed trades, and the two move together
+as expected. Training also became about 2.6 times faster, from 500 s to 198 s per seed.
 
 ### Single-seed canonical run
 
@@ -314,41 +336,83 @@ figure pipeline are consistent.
 
 | Strategy | Mean PnL | Std | CVaR 95 | CVaR 99 | Entropic | Mean cost | Gross PnL | Turnover | Tail cost share |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Deep Hedging | -3.170 | 0.930 | 4.968 | 5.530 | 3.593 | 0.883 | -2.287 | 14.83 | 0.220 |
+| Deep Hedging | -3.315 | 0.776 | 4.895 | 5.410 | 3.613 | 1.029 | -2.286 | 15.48 | 0.227 |
 | Black-Scholes | -4.512 | 0.757 | 6.363 | 7.016 | 4.861 | 2.224 | -2.288 | 15.01 | 0.526 |
 | Leland | -4.281 | 0.512 | 5.539 | 6.039 | 4.429 | 1.993 | -2.288 | 15.11 | 0.495 |
 
-Maximum drawdown, on the path convention of this implementation: worst 26.824 (deep hedging), 26.739
-(Black-Scholes), 26.739 (Leland); mean 5.043, 6.121, 5.896. The worst values are dominated by the
+Maximum drawdown, on the path convention of this implementation: worst 26.662 (deep hedging), 26.739
+(Black-Scholes), 26.739 (Leland); mean 5.240, 6.121, 5.896. The worst values are dominated by the
 terminal payoff jump and are not an informative intra-horizon drawdown, see the limitations.
-
-Cost sensitivity, CVaR 95 and CVaR 99, policy retrained per cost level on 20,000 paths for 8 epochs:
-
-| Cost | Deep mean | Deep CVaR95 | Deep CVaR99 | BS CVaR95 | BS CVaR99 | Leland CVaR95 | Leland CVaR99 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.00% | -2.287 | 3.611 | 4.077 | 3.111 | 3.508 | 3.111 | 3.508 |
-| 0.10% | -2.489 | 3.963 | 4.419 | 3.416 | 3.846 | 3.375 | 3.788 |
-| 0.50% | -2.908 | 4.611 | 5.150 | 4.696 | 5.245 | 4.380 | 4.850 |
-| 1.00% | -3.402 | 5.105 | 5.534 | 6.358 | 7.051 | 5.532 | 6.059 |
 
 Policy response at step 15 with previous position 0.508, benchmark reference in brackets:
 
 | Spot move | Spot | Deep Hedging | Black-Scholes | Leland |
 | --- | --- | --- | --- | --- |
-| -12% | 88.00 | 0.258 | 0.001 | 0.009 |
-| -8% | 92.00 | 0.344 | 0.021 | 0.064 |
-| -4% | 96.00 | 0.432 | 0.162 | 0.232 |
-| -2% | 98.00 | 0.495 | 0.316 | 0.364 |
-| 0% | 100.00 | 0.497 | 0.508 | 0.511 |
-| +2% | 102.00 | 0.519 | 0.695 | 0.654 |
-| +4% | 104.00 | 0.578 | 0.838 | 0.775 |
-| +8% | 108.00 | 0.654 | 0.973 | 0.927 |
-| +12% | 112.00 | 0.710 | 0.998 | 0.984 |
+| -12% | 88.00 | 0.205 | 0.001 | 0.009 |
+| -8% | 92.00 | 0.284 | 0.021 | 0.064 |
+| -4% | 96.00 | 0.434 | 0.162 | 0.232 |
+| -2% | 98.00 | 0.492 | 0.316 | 0.364 |
+| 0% | 100.00 | 0.515 | 0.508 | 0.511 |
+| +2% | 102.00 | 0.542 | 0.695 | 0.654 |
+| +4% | 104.00 | 0.592 | 0.838 | 0.775 |
+| +8% | 108.00 | 0.733 | 0.973 | 0.927 |
+| +12% | 112.00 | 0.818 | 0.998 | 0.984 |
 
-Auxiliary runs, not saved as figures. Heston with CVaR 95 and 8 epochs, 12,000 paths: deep hedging
-CVaR 95 5.503 against 6.598 (Black-Scholes) and 5.779 (Leland). Zero-cost GBM at `lambda = 50`,
-30,000 paths and 30 epochs: deep hedging entropic 4.005 against 4.114 (Black-Scholes), with mean
-absolute deviation from the Black-Scholes delta of 0.045, 0.030 and 0.063 at steps 5, 15 and 25.
+### Full-budget cost sensitivity
+
+The cost study was re-run at the full main-run budget, 100,000 paths and 20 epochs per cost level,
+instead of the earlier reduced 20,000 paths and 8 epochs. The evaluation protocol is unchanged, so the
+numbers are directly comparable to the previous table. The study took 831 s.
+
+| Cost | Deep mean | Deep CVaR95 | Deep CVaR99 | BS CVaR95 | BS CVaR99 | Leland CVaR95 | Leland CVaR99 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.00% | -2.288 | 3.110 | 3.471 | 3.127 | 3.518 | 3.127 | 3.518 |
+| 0.10% | -2.448 | 3.342 | 3.673 | 3.430 | 3.849 | 3.390 | 3.791 |
+| 0.50% | -2.843 | 4.157 | 4.576 | 4.707 | 5.230 | 4.390 | 4.837 |
+| 1.00% | -3.206 | 5.023 | 5.574 | 6.363 | 7.016 | 5.539 | 6.039 |
+
+The zero-cost case is the important one, because it is the limit in which the theory says the optimal
+policy is the Black-Scholes delta. At the reduced budget the learned policy was worse than both
+benchmarks at zero cost, with CVaR 95 of 3.611 against 3.111. At the full budget it is now slightly
+better than both, with CVaR 95 of 3.110 against 3.127 and CVaR 99 of 3.471 against 3.518, and its mean
+PnL of -2.288 matches the benchmarks to three decimals. The earlier deficit was under-training, not a
+property of the method.
+
+The delta convergence confirms the same conclusion directly. At zero cost, on realized paths, the mean
+absolute deviation of the learned position from the Black-Scholes delta is 0.0071 at step 5, 0.0105 at
+step 15 and 0.0148 at step 25, with correlations of 0.9985, 0.9994 and 0.9996. The learned policy has
+recovered the analytic delta to within about one percent of a position unit.
+
+The advantage over the benchmarks grows monotonically with the cost level, from a CVaR 95 gap of 0.017
+at zero cost to 1.340 at one percent, which is the paper's central qualitative prediction.
+
+### Heston transaction cost sweep
+
+The same cost study was run under the Heston simulator, using the existing simulator and PnL engine
+with no changes to either. The benchmark volatility is the variance-adjusted value
+$\sigma = \sqrt{v_0} = 0.2$, so the analytic deltas are the same Black-Scholes and Leland formulas
+evaluated at the long-run variance. Budget: 20,000 paths and 10 epochs per cost level, which is
+reduced relative to the GBM study because the Heston path generation and the stochastic variance state
+make each epoch more expensive. The study took 402 s.
+
+| Cost | Deep mean | Deep CVaR95 | Deep CVaR99 | BS CVaR95 | BS CVaR99 | Leland CVaR95 | Leland CVaR99 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.00% | -2.274 | 3.468 | 3.843 | 3.294 | 3.817 | 3.294 | 3.817 |
+| 0.10% | -2.431 | 3.478 | 3.878 | 3.603 | 4.163 | 3.562 | 4.103 |
+| 0.50% | -2.875 | 4.257 | 4.746 | 4.899 | 5.588 | 4.585 | 5.186 |
+| 1.00% | -3.396 | 4.989 | 5.577 | 6.575 | 7.412 | 5.758 | 6.425 |
+
+The pattern matches the GBM study. The learned policy is slightly worse than the benchmarks at zero
+cost, by 0.174 in CVaR 95, which is consistent with the reduced training budget rather than with the
+simulator. It is better at every positive cost level, and the margin widens with cost: 0.125 at 0.10
+percent, 0.328 at 0.50 percent and 0.769 at 1.00 percent against Leland, and 1.586 against
+Black-Scholes at 1.00 percent. The zero-cost deficit is larger here than in the GBM study, which is
+what the smaller budget predicts.
+
+The Heston results also show that the policy uses the variance state. The learned policy is trained
+with the variance path as an input, and it beats the variance-adjusted analytic benchmarks at positive
+cost, which a policy ignoring the variance state could not do as consistently. This is a qualitative
+observation, not a controlled ablation.
 
 ## Remaining limitations and open issues
 
@@ -363,46 +427,47 @@ absolute deviation from the Black-Scholes delta of 0.045, 0.030 and 0.063 at ste
    booked in one step at maturity. The worst-case column is effectively a rescaled maximum payoff and
    should not be read as a drawdown. The mean column is more informative but still conflates the cost
    drag with the terminal settlement.
-4. The cost sensitivity study uses 8 epochs and 20,000 paths, well below the main run. The zero-cost
-   result, where the learned policy is worse than Black-Scholes, is most plausibly under-training
-   rather than a property of the method, but it has not been demonstrated.
+4. The Heston cost sweep uses 20,000 paths and 10 epochs, below the GBM study. Its zero-cost case
+   still shows a small deficit against the benchmarks, 0.174 in CVaR 95, which the GBM study showed
+   to be a budget effect. Re-running Heston at the full budget would settle it.
 5. The time-dependent variant does not converge to a competitive policy at the tested budget. With
    276,510 parameters and 20,000 paths it reaches a delta surface correlating 0.95 with
    Black-Scholes but a zero-cost entropic risk of 6.445 against 4.121 for the benchmark, which is a
    data-per-parameter problem rather than a defect. Shared weights are the default for this reason.
+   This was measured before the LayerNorm change and has not been re-tested.
 6. The CVaR threshold is projected to the sample quantile once per epoch rather than being optimized
    jointly at full precision. The projection is exact for a fixed sample and the representation is
    convex, but the interaction between threshold updates and minibatch noise is not characterized.
-7. BatchNorm train and evaluation statistics diverge for some seeds and this materially affects the
-   reported risk. Seed 44 shows a gap of 0.55 between the minibatch training risk of 3.578 and the
-   evaluation risk of 4.134, while seed 42 shows 0.013. Because the training paths and fresh paths
-   give the same evaluation risk, the effect is not overfitting; it is a mismatch between the batch
-   statistics seen during training and the running statistics used at evaluation. This is the single
-   largest uncontrolled source of seed variance and the first thing to fix. Multi-seed results are
-   reported as they stand rather than filtered, since dropping the seed would understate the spread.
+7. The residual seed spread in mean PnL and mean cost, about 0.05 each, is genuine policy variation
+   rather than a defect: the two move together, so seeds that trade more pay more and earn more. It
+   does not affect the risk measures, which are now reproducible to about 0.03 to 0.09.
 8. Entropic risk uses `lambda = 1.0` against a PnL scale of about 3, which is a strong risk aversion.
    The paper treats `lambda` as a tuning parameter and reports a family of solutions. Here only one
    point of that family is explored.
-9. Heston results are not reported in the saved figures. They exist in the console output of
-   auxiliary runs but the canonical figure set is GBM only.
+9. Heston results are reported as a table but not as figures. The canonical figure set is GBM only.
+
+### Resolved in this iteration
+
+- The BatchNorm train and evaluation mismatch is fixed. Per-step BatchNorm was replaced by LayerNorm,
+  which has no running statistics, so training and evaluation modes are identical by construction.
+  The seed 44 gap fell from 0.55 to 0.006, the risk measures became 7 to 8 times more reproducible,
+  and training became 2.6 times faster. The BatchNorm path remains available as `--norm batchnorm`.
+- The zero-cost under-training result is resolved. At the full budget the learned policy matches the
+  Black-Scholes delta to a mean absolute deviation of 0.007 to 0.015 with correlation 0.9996, and
+  matches or slightly beats both benchmarks on CVaR. The earlier deficit was a budget artifact.
+- The CVaR advantage over Leland, previously not significant at a t ratio of 1.2, is now significant
+  at a t ratio of 19.4 for CVaR 95 and 12.5 for CVaR 99.
 
 ## Suggested next experiments
 
-1. Fix the BatchNorm train and evaluation mismatch, then repeat the 5-seed study. Replacing the
-   per-step BatchNorm with LayerNorm, or freezing the running statistics over the last epoch, should
-   remove the 0.55 gap seen at seed 44 and shrink the seed spread. This is the highest value change
-   because it currently dominates the uncertainty on every learned policy metric.
-2. Re-run the cost sensitivity with the full 20 epoch budget and 100,000 paths, then check whether the
-   learned policy converges to the Black-Scholes delta at zero cost as the theory requires. This
-   directly tests the one result that currently contradicts the paper.
-3. Add a transactional-cost sweep with the Heston simulator and report the variance-aware policy
-   against a variance-adjusted benchmark. The Heston state is already implemented, so only the
-   benchmark and the reporting change.
+1. Re-run the Heston cost sweep at the full 100,000 path and 20 epoch budget to confirm that its
+   zero-cost deficit also disappears, as it did for GBM.
+2. Raise the seed count to 10 or 20. The risk measures are now tight enough that 5 seeds resolve every
+   gap, but a larger count would tighten the mean PnL and cost estimates, which still carry a spread
+   of about 0.05.
+3. Re-test the time-dependent variant under LayerNorm. The earlier failure was measured with
+   BatchNorm, and the normalization change may alter the data-per-parameter requirement.
 4. Calibrate the Heston simulator to a real return series and evaluate out of sample on a held-out
    window, which is the missing empirical step relative to the paper.
 5. Replace the terminal-jump drawdown with an intra-horizon drawdown on the pre-settlement path, and
    report both. This makes the drawdown column interpretable and separates cost drag from settlement.
-
-If the BatchNorm mismatch is resolved, the natural follow-up is to raise the seed count to 10 or 20
-and re-test the CVaR gap to Leland, which needs roughly 30 seeds at the current dispersion to reach
-significance if the point estimate of 0.256 is correct.

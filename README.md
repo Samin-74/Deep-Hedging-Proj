@@ -58,6 +58,8 @@ python main.py --cost 0.005 --epochs 40 --time-dependent
 python main.py --no-sensitivity --results-dir results_fast
 python main.py --seed 7 --deterministic
 python main.py --multi-seed
+python main.py --sensitivity-paths 100000 --sensitivity-epochs 20
+python heston_sweep.py 20000 10
 ```
 
 ## Multi-seed study
@@ -66,9 +68,18 @@ The headline results table in `PRELIMINARY_ANALYSIS.md` is based on a 5-seed stu
 `python main.py --multi-seed` trains and evaluates the main configuration once per seed (42, 43, 44,
 45, 46) at the full path budget, then reports mean and standard deviation across seeds for mean PnL,
 standard deviation, 95 and 99 percent CVaR, entropic risk and mean transaction cost, for Deep Hedging,
-Black-Scholes and Leland. The study writes `results/multiseed_summary.json` and does not touch the
+Black-Scholes and Leland. The study writes `results/multiseed_layernorm.json` and does not touch the
 canonical single-seed figures in `results/`. Use `--seeds` to override the seed list and
 `--multi-seed-output` to redirect the JSON.
+
+## Normalization
+
+The policy uses LayerNorm by default. Per-step BatchNorm was the original choice but it normalizes
+with batch statistics during training and with lagged running statistics at evaluation, and the two
+diverge as the policy sharpens. That mismatch inflated the seed-to-seed standard deviation of the risk
+measures by a factor of 7 and produced a 0.55 train and evaluation gap on one seed. LayerNorm has no
+running statistics, so both modes are identical by construction. Pass `--norm batchnorm` to reproduce
+the earlier behaviour.
 
 ## Outputs
 
@@ -89,11 +100,11 @@ maximum drawdown, then writes figures to `results/`:
 
 - Shared weight mode keeps one linear layer per hidden layer but per-step batch normalization
   statistics, so time dependence enters through normalization while the body stays shared.
-- Batch normalization uses a variance floor. Constant features occur at the first step where every
+- The BatchNorm path uses a variance floor. Constant features occur at the first step where every
   path starts at the same spot, and without the floor the running variance would be zero and the
   policy would saturate. Degenerate inputs fall back to the floored running statistics in both
   training and evaluation, so the first position stays well defined and gradient magnitudes are not
-  amplified by the normalization epsilon.
+  amplified by the normalization epsilon. This path is not the default.
 - When the CVaR tail is very short, the batch is raised automatically so the tail holds at least
   `min_tail_samples` paths. Without this a 99 percent CVaR on 256 paths sees about 2.5 samples. The
   warm start and the per-epoch threshold projection share `var_threshold`, which returns the alpha
