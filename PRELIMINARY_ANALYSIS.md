@@ -21,6 +21,11 @@ complete train and evaluate cycle at the same budget, and the main table reports
 standard deviation across the 5 seeds. The study took 989 s and writes
 `results/multiseed_layernorm.json`.
 
+Every saved study records its own run metadata under a `config` key, including simulator, path budget,
+epoch count, cost level and normalization. Check that block before quoting any number from a JSON file:
+a reduced-budget smoke test overwrites the file it is pointed at, and the metadata makes such a
+mismatch immediately visible.
+
 Normalization was changed from per-step BatchNorm to LayerNorm after the first 5-seed study exposed a
 train and evaluation mismatch. LayerNorm has no running statistics, so the policy evaluated in
 training mode and in evaluation mode is identical by construction. This removed the mismatch, cut the
@@ -300,13 +305,17 @@ Per-seed values for the learned policy, showing where the dispersion comes from:
 The multi-seed study increases the statistical reliability of the reported gaps. Using the standard
 error of the mean across seeds, $\mathrm{SE} = s/\sqrt{5}$, the gaps against Leland are:
 
-| Metric | Gap, Leland minus Deep Hedging | Standard error | t ratio | Reliable |
+| Metric | Gap, Leland minus Deep Hedging | Standard error | t ratio | Favours |
 | --- | --- | --- | --- | --- |
-| Mean PnL | +1.027 | 0.025 | 40.7 | yes |
-| Mean cost | +1.026 | 0.024 | 42.8 | yes |
-| Entropic | +0.827 | 0.013 | 62.1 | yes |
-| CVaR 95 | +0.548 | 0.028 | 19.4 | yes |
-| CVaR 99 | +0.484 | 0.039 | 12.5 | yes |
+| Mean PnL | -1.027 | 0.025 | 40.7 | Deep Hedging |
+| Mean cost | +1.026 | 0.024 | 42.8 | Deep Hedging |
+| Entropic | +0.827 | 0.013 | 62.1 | Deep Hedging |
+| CVaR 95 | +0.548 | 0.028 | 19.4 | Deep Hedging |
+| CVaR 99 | +0.484 | 0.039 | 12.5 | Deep Hedging |
+
+The sign convention is that a positive gap means Leland is worse on that metric, so a positive gap
+favours deep hedging for every loss based measure. Mean PnL carries the opposite sign because a higher
+PnL is better, so the negative gap of -1.027 means deep hedging earns 1.027 more than Leland.
 
 Every gap against Leland is now far outside the seed noise, including both CVaR measures. Against
 Black-Scholes the t ratios are 49.9 for mean PnL, 52.4 for cost, 94.4 for entropic risk, 48.5 for
@@ -351,7 +360,7 @@ figure pipeline are consistent.
 Drawdown is reported two ways. The terminal-jump version, which includes the maturity liability, gives
 worst 26.662 (deep hedging), 26.739 (Black-Scholes), 26.739 (Leland) and mean 5.240, 6.121, 5.896; it
 is dominated by the common payoff and does not discriminate. The intra-horizon version, computed on
-the pre-settlement path, gives mean 3.813, 4.456, 4.210 and worst 9.512, 10.962, 10.483, and does
+the pre-settlement path, gives mean 3.617, 4.469, 4.221 and worst 12.411, 13.326, 13.031, and does
 discriminate. See the drawdown section below.
 
 Policy response at step 15 with previous position 0.508, benchmark reference in brackets:
@@ -393,8 +402,10 @@ absolute deviation of the learned position from the Black-Scholes delta is 0.007
 step 15 and 0.0148 at step 25, with correlations of 0.9985, 0.9994 and 0.9996. The learned policy has
 recovered the analytic delta to within about one percent of a position unit.
 
-The advantage over the benchmarks grows monotonically with the cost level, from a CVaR 95 gap of 0.017
-at zero cost to 1.340 at one percent, which is the paper's central qualitative prediction.
+The advantage over the benchmarks grows monotonically with the cost level. Against Black-Scholes the
+CVaR 95 gap rises from 0.017 at zero cost to 1.340 at one percent; against Leland, which is the
+stronger benchmark, it rises from 0.017 to 0.516. That monotone widening is the paper's central
+qualitative prediction.
 
 ### Heston transaction cost sweep
 
@@ -500,15 +511,15 @@ excludes the terminal settlement and measures only the risk accumulated while he
 
 | Strategy | Terminal DD mean | Terminal DD worst | Intra DD mean | Intra DD p95 | Intra DD worst |
 | --- | --- | --- | --- | --- | --- |
-| Deep Hedging | 5.484 | 26.365 | 3.813 | 6.099 | 9.512 |
-| Black-Scholes | 6.131 | 26.271 | 4.456 | 7.039 | 10.962 |
-| Leland | 5.906 | 26.271 | 4.210 | 6.525 | 10.483 |
+| Deep Hedging | 5.240 | 26.662 | 3.617 | 6.005 | 12.411 |
+| Black-Scholes | 6.121 | 26.739 | 4.469 | 7.057 | 13.326 |
+| Leland | 5.896 | 26.739 | 4.221 | 6.536 | 13.031 |
 
-The terminal column confirms the problem: the worst values are 26.365, 26.271 and 26.271, essentially
+The terminal column confirms the problem: the worst values are 26.662, 26.739 and 26.739, essentially
 identical, because they are driven by the largest payoff in the sample rather than by the hedging. The
 intra-horizon column separates the strategies cleanly. Deep hedging has the lowest mean drawdown at
-3.813 against 4.456 for Black-Scholes and 4.210 for Leland, and the lowest worst case at 9.512 against
-10.962 and 10.483. This is consistent with the CVaR ordering and shows the improvement is not confined
+3.617 against 4.469 for Black-Scholes and 4.221 for Leland, and the lowest worst case at 12.411 against
+13.326 and 13.031. This is consistent with the CVaR ordering and shows the improvement is not confined
 to the terminal distribution.
 
 ### Entropic risk aversion sweep
@@ -658,9 +669,9 @@ artifact, not a capacity limit, but removing that artifact made it competitive r
 - The CVaR advantage over Leland, previously not significant at a t ratio of 1.2, is now significant
   at a t ratio of 19.4 for CVaR 95 and 12.5 for CVaR 99.
 - The drawdown metric is now interpretable. An intra-horizon drawdown on the pre-settlement path is
-  reported alongside the terminal-jump version, and it separates the strategies: 3.813 for deep
-  hedging against 4.456 for Black-Scholes and 4.210 for Leland, where the terminal-jump version gave
-  5.484, 6.131 and 5.906 and was dominated by the common maturity liability.
+  reported alongside the terminal-jump version, and it separates the strategies: 3.617 for deep
+  hedging against 4.469 for Black-Scholes and 4.221 for Leland, where the terminal-jump version gave
+  5.240, 6.121 and 5.896 and was dominated by the common maturity liability.
 - The time-dependent variant is competitive under LayerNorm. At 100,000 paths and 20 epochs it
   reaches an entropic risk of 3.671 against 3.613 for the shared variant, and beats both benchmarks.
   The earlier failure was a BatchNorm artifact, not a capacity limit.

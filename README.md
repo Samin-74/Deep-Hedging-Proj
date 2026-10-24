@@ -77,6 +77,10 @@ Black-Scholes and Leland. The study writes `results/multiseed_layernorm.json` an
 canonical single-seed figures in `results/`. Use `--seeds` to override the seed list and
 `--multi-seed-output` to redirect the JSON.
 
+Every saved study records its run metadata under a `config` key, including the path budget, epoch
+count and normalization. Check that block before quoting numbers from a JSON file, since running a
+reduced-budget smoke test against a results path will overwrite it.
+
 ## Normalization
 
 The policy uses LayerNorm by default. Per-step BatchNorm was the original choice but it normalizes

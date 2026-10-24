@@ -438,7 +438,7 @@ def run_multi_seed(config: Config, seeds: list[int], output: str | None) -> int:
     )
     print(f"seeds {seeds}")
     print("=" * 78)
-    target = output or str(config.results_path / "multiseed_summary.json")
+    target = output or str(config.results_path / "multiseed_layernorm.json")
     study = run_study(
         config=config,
         seeds=seeds,

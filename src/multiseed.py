@@ -149,6 +149,7 @@ def save_summary(
     per_seed: Sequence[Mapping[str, Mapping[str, float]]],
     seeds: Sequence[int],
     path: str | Path,
+    config=None,
 ) -> Path:
     # Persist the study so the write-up can be regenerated
     target = Path(path)
@@ -167,6 +168,19 @@ def save_summary(
             for run in per_seed
         ],
     }
+    if config is not None:
+        # Run metadata guards against quoting a reduced budget by mistake
+        payload["config"] = {
+            "simulator": config.simulator,
+            "loss_type": config.loss_type,
+            "cost_rate": float(config.cost_rate),
+            "n_paths": int(config.n_paths),
+            "n_eval_paths": int(config.n_eval_paths),
+            "epochs": int(config.epochs),
+            "lambda_entropic": float(config.lambda_entropic),
+            "norm_type": config.norm_type,
+            "time_dependent": bool(config.time_dependent),
+        }
     target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return target
 
@@ -222,7 +236,7 @@ def run_study(
 
     print_summary(summary, seeds, format_table)
     if output_path is not None:
-        saved = save_summary(summary, per_seed, seeds, output_path)
+        saved = save_summary(summary, per_seed, seeds, output_path, config)
         print(f"multi-seed summary written to {saved}")
     print(f"multi-seed study finished in {time.perf_counter() - started:.1f}s")
     return {"summary": summary, "per_seed": per_seed, "seeds": list(seeds)}
