@@ -453,25 +453,42 @@ variance effect is therefore real but roughly a quarter the size of the moneynes
 
 ### Heston policy surface
 
-`heston_policy_curves.png` has three panels. Left: a heatmap of the hedge position against spot on the
-horizontal axis and instantaneous volatility on the vertical axis, at step 15 with the previous
-position at zero, with the three probe volatility levels marked as dotted lines. Middle: the position
-against spot for three fixed previous positions at volatility 0.20, against the Black-Scholes delta.
-Right: the implied no-trade band, the trade size against spot for the same three previous positions.
+`heston_policy_curves.png` has four panels. Top left: a heatmap of the hedge position against spot on
+the horizontal axis and instantaneous volatility on the vertical axis, at step 15 with the previous
+position at zero, with the three probe volatility levels marked as dotted lines. Top right: the
+position difference against the volatility 0.20 baseline, for the same three volatility levels. Bottom
+left: the position against spot for three fixed previous positions at volatility 0.20, against the
+Black-Scholes delta. Bottom right: the implied no-trade band, the trade size against spot for the same
+three previous positions.
 
-The heatmap is the panel that makes the variance dependence readable. A line plot of three volatility
-levels largely overlaps because the effect is modest, whereas the heatmap shows the whole surface. The
-position rises with spot as expected, and at any fixed spot it rises with volatility, from about 0.15 at
-volatility 0.10 to about 0.24 at 0.35 at the money. The gradient is steeper in the region where the
-call is near or above the strike, where convexity matters most, and flattens deep in the money where
-the position approaches its upper bound.
+The heatmap is the primary panel because it shows the whole surface at once. A line plot of three
+volatility levels largely overlaps, since the effect is modest, whereas the heatmap makes the gradient
+visible across the full range. The position rises with spot as expected, and at any fixed spot it rises
+with volatility, from about 0.15 at volatility 0.10 to about 0.24 at 0.35 at the money. The gradient is
+steeper in the region where the call is near or above the strike, where convexity matters most, and
+flattens deep in the money where the position approaches its upper bound.
 
-The middle and right panels reproduce the GBM result in the Heston setting. The learned position lies
-below the Black-Scholes delta across the whole spot range, and the trade size is close to zero over a
-wide interval that shifts with the previous position. The band is widest for the previous position of
-0.30, where the policy declines to trade for spot between roughly 90 and 100, which is the same
-asymmetric no-transaction region seen in the GBM study. The variance-aware policy therefore preserves
-the qualitative structure of the frictional optimum rather than collapsing to a memoryless delta.
+The difference panel is the alternative view that makes the modest effect legible. Subtracting the
+volatility 0.20 baseline removes the dominant moneyness trend, so the residual variance effect is
+plotted on its own scale of about plus or minus 0.05 rather than being compressed against a position
+range of 0 to 1.
+
+The panel shows the effect is not a uniform vertical shift but changes sign across the spot range. For
+volatility 0.30 the position is above the baseline by up to 0.045 in the region just above the strike,
+near spot 100 to 102.5, where a higher variance raises the value of an at or near the money call. It
+falls below the baseline by about 0.029 at spot 110, where the call is comfortably in the money and the
+higher variance instead widens the region over which the policy declines to add, and it returns towards
+the baseline further out. For volatility 0.12 the pattern is broadly the mirror image, with a smaller
+amplitude. This sign structure is the economically meaningful part of the variance response, and it is
+not visible in the overlapping curves or in the heatmap colour scale alone, which is why the difference
+panel is retained alongside the heatmap.
+
+The bottom two panels reproduce the GBM result in the Heston setting. The learned position lies below
+the Black-Scholes delta across the whole spot range, and the trade size is close to zero over a wide
+interval that shifts with the previous position. The band is widest for the previous position of 0.30,
+where the policy declines to trade for spot between roughly 90 and 100, which is the same asymmetric
+no-transaction region seen in the GBM study. The variance-aware policy therefore preserves the
+qualitative structure of the frictional optimum rather than collapsing to a memoryless delta.
 
 ### Drawdown: terminal jump against intra-horizon
 
@@ -540,6 +557,25 @@ both benchmarks on every measure.
 The `lambda = 1.0` row matches the main 5-seed table exactly, as it should, since it is the same
 configuration and seeds. This is a useful internal consistency check on the sweep implementation.
 
+### Fitted frontier curve
+
+`lambda_frontier.png` shows the five computed points with their error bars and a smooth curve drawn
+through them. The left panel plots mean PnL against CVaR 95, the middle panel plots mean cost against
+CVaR 95, and the third panel shows dispersion and tail risk against `lambda`.
+
+The curve is a monotone piecewise cubic Hermite interpolant (PCHIP) of the five mean points, computed
+in $\log\lambda$ rather than in $\lambda$ itself, because the sampled values 0.25, 0.5, 1.0, 2.0 and
+4.0 are equally spaced on a log scale. The interpolation is monotone by construction, so it cannot
+introduce a spurious reversal between two adjacent risk aversion levels, and it passes exactly through
+every computed point. It is clamped to the first and last point outside the sampled range, so the curve
+never extrapolates beyond the evidence.
+
+This is a visualization convenience, not a new result. The fit adds no information beyond the five
+points: it does not estimate the curve at unsampled `lambda` values, since the true frontier need not
+be piecewise cubic between them, and no claim in this document depends on it. Its only purpose is to
+make the shape of the tradeoff easier to read than five isolated markers. The reported numbers remain
+the five computed points in the table above, each with its own 5-seed standard deviation.
+
 ### Time-dependent variant under LayerNorm
 
 The network supports two weight-sharing modes. The shared mode uses one linear layer per hidden layer
@@ -597,12 +633,16 @@ artifact, not a capacity limit, but removing that artifact made it competitive r
    What is not characterized is the interaction between the once-per-epoch projection and minibatch
    noise within the epoch, since the threshold is held fixed across the minibatches of an epoch while
    the policy moves.
-7. The lambda sweep covers five values, 0.25 to 4.00, which is enough to read the frontier shape but
-   not a continuous parameterization. The paper treats `lambda` as a continuous tuning parameter.
+7. The lambda sweep covers five computed values, 0.25 to 4.00, which is enough to read the frontier
+   shape but is not a continuous parameterization. A continuous fitted curve is now available as a
+   visualization aid drawn through the five computed points, shown in `lambda_frontier.png`. The curve
+   interpolates the measured means and does not add evidence at unsampled `lambda` values, so the five
+   computed points remain the reported result.
 8. The Heston policy figure uses a heatmap for the variance dimension rather than a family of curves,
    because the variance effect, a spread of about 0.08 in position across the full volatility range,
-   is small enough that separate curves overlap. The heatmap is readable but less direct than the
-   single-curve GBM panel.
+   is small enough that separate curves overlap. A difference panel against the volatility 0.20
+   baseline is included to make the residual effect legible, but neither panel is as direct as the
+   single-curve GBM figure, since the Heston policy is a surface rather than a curve.
 
 ### Resolved in this iteration
 
@@ -646,5 +686,6 @@ remaining work is either empirical or a genuine scope extension rather than a st
    rather than a parameter change.
 3. Add a second friction model, for example quadratic market impact or a bid-ask spread, to test
    whether the no-transaction band widens as the theory predicts when costs become nonlinear.
-4. Extend the lambda frontier to a continuous curve by fitting the five computed points, which would
-   let the efficient frontier be read at any risk aversion rather than at the sampled values.
+4. Add computed points between the existing `lambda` values rather than reading the fitted curve at
+   unsampled risk aversions, if a finer frontier is needed for the write-up. The fitted curve is a
+   visualization aid only and should not be used to quote numbers at unsampled `lambda`.

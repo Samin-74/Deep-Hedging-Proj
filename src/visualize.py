@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -13,6 +14,7 @@ from matplotlib.figure import Figure
 
 from .benchmarks import bs_delta, leland_delta
 from .loss import empirical_cvar
+from .studies import pchip
 
 DPI = 220
 COLORS = {
@@ -496,6 +498,23 @@ def plot_lambda_frontier(
     cost, cost_sd = series("mean_cost")
     std_pnl, std_pnl_sd = series("std_pnl")
 
+    # Monotone cubic fit in log lambda, a visualization aid only
+    log_lambdas = [math.log(float(lam)) for lam in lambdas]
+    dense = [log_lambdas[0] + (log_lambdas[-1] - log_lambdas[0]) * i / 200 for i in range(201)]
+    fit_pnl = pchip(log_lambdas, mean_pnl, dense)
+    fit_cvar95 = pchip(log_lambdas, cvar95, dense)
+    fit_cost = pchip(log_lambdas, cost, dense)
+
+    left.plot(
+        fit_pnl,
+        fit_cvar95,
+        color=COLORS["Deep Hedging"],
+        linewidth=1.4,
+        alpha=0.55,
+        linestyle="-",
+        label="Fitted frontier",
+        zorder=1,
+    )
     left.errorbar(
         mean_pnl,
         cvar95,
@@ -504,17 +523,28 @@ def plot_lambda_frontier(
         color=COLORS["Deep Hedging"],
         marker="o",
         markersize=6,
-        linewidth=1.9,
+        linewidth=0,
+        elinewidth=1.4,
         capsize=3,
-        label="Deep Hedging",
+        label="Computed points",
+        zorder=3,
     )
     for lam, x, y in zip(lambdas, mean_pnl, cvar95):
         left.annotate(f"{lam:.2f}", xy=(x, y), xytext=(6, 6), textcoords="offset points", fontsize=8.5, color=TEXT_COLOR)
     left.set_xlabel("Mean PnL")
     left.set_ylabel("CVaR 95, loss basis")
     left.set_title("Risk return frontier, labels are lambda")
-    left.legend(frameon=False, fontsize=9.0, loc="upper left")
+    left.legend(frameon=False, fontsize=8.6, loc="lower right")
 
+    middle.plot(
+        fit_cost,
+        fit_cvar95,
+        color=COLORS["Deep Hedging"],
+        linewidth=1.4,
+        alpha=0.55,
+        label="Fitted frontier",
+        zorder=1,
+    )
     middle.errorbar(
         cost,
         cvar95,
@@ -523,16 +553,18 @@ def plot_lambda_frontier(
         color=COLORS["Deep Hedging"],
         marker="o",
         markersize=6,
-        linewidth=1.9,
+        linewidth=0,
+        elinewidth=1.4,
         capsize=3,
-        label="Deep Hedging",
+        label="Computed points",
+        zorder=3,
     )
     for lam, x, y in zip(lambdas, cost, cvar95):
         middle.annotate(f"{lam:.2f}", xy=(x, y), xytext=(6, 6), textcoords="offset points", fontsize=8.5, color=TEXT_COLOR)
     middle.set_xlabel("Mean transaction cost")
     middle.set_ylabel("CVaR 95, loss basis")
-    middle.set_title("Cost against tail risk")
-    middle.legend(frameon=False, fontsize=9.0, loc="upper left")
+    middle.set_title("Cost against tail risk, labels are lambda")
+    middle.legend(frameon=False, fontsize=8.6, loc="lower left")
 
     right.errorbar(
         lambdas,
@@ -593,8 +625,9 @@ def plot_heston_policy(
     tau = (config.n_steps - step) * config.dt
     reference_bs = bs_delta(spots, config.K, config.r, config.benchmark_sigma, tau)
 
-    fig, axes = plt.subplots(1, 3, figsize=(17.4, 5.4))
-    left, middle, right = axes[0], axes[1], axes[2]
+    fig, axes = plt.subplots(2, 2, figsize=(13.6, 10.2))
+    left, delta_panel = axes[0]
+    middle, right = axes[1]
 
     # Heatmap makes the variance dependence readable where curves overlap
     vol_grid = np.linspace(0.08, 0.36, 57)
@@ -603,14 +636,14 @@ def plot_heston_policy(
         variance = torch.full_like(spots, float(vol) ** 2)
         with torch.no_grad():
             surface[i] = model.policy_at_step(spots, step, 0.0, variance=variance).numpy()
-    mesh = left.pcolormesh(
+    surface_artist = left.pcolormesh(
         spots.numpy(),
         vol_grid,
         surface,
         cmap="viridis",
         shading="auto",
     )
-    bar = fig.colorbar(mesh, ax=left, pad=0.02)
+    bar = fig.colorbar(surface_artist, ax=left, pad=0.02)
     bar.set_label("Hedge position")
     bar.ax.tick_params(labelsize=8.5, colors=MUTED_COLOR)
     for vol in vol_levels:
@@ -618,6 +651,28 @@ def plot_heston_policy(
     left.set_xlabel("Spot price at the decision date")
     left.set_ylabel("Instantaneous volatility")
     left.set_title(f"Heston position surface at step {step}, previous position 0")
+
+    # Difference against the baseline volatility makes the modest effect legible
+    baseline_vol = float(vol_levels[len(vol_levels) // 2])
+    baseline = torch.full_like(spots, baseline_vol**2)
+    with torch.no_grad():
+        base_curve = model.policy_at_step(spots, step, 0.0, variance=baseline).numpy()
+    for color, vol in zip(CURVE_COLORS, vol_levels):
+        variance = torch.full_like(spots, float(vol) ** 2)
+        with torch.no_grad():
+            curve = model.policy_at_step(spots, step, 0.0, variance=variance).numpy()
+        delta_panel.plot(
+            x,
+            curve - base_curve,
+            color=color,
+            linewidth=2.0,
+            label=f"Volatility {vol:.2f} minus {baseline_vol:.2f}",
+        )
+    delta_panel.axhline(0.0, color=TEXT_COLOR, linewidth=0.9)
+    delta_panel.set_xlabel("Spot price at the decision date")
+    delta_panel.set_ylabel("Position difference")
+    delta_panel.set_title(f"Variance effect relative to volatility {baseline_vol:.2f}")
+    delta_panel.legend(frameon=False, fontsize=8.6, loc="upper right")
 
     for color, prev in zip(CURVE_COLORS, prev_deltas):
         variance = torch.full_like(spots, float(vol_levels[len(vol_levels) // 2]) ** 2)
@@ -654,7 +709,7 @@ def plot_heston_policy(
     right.set_title(f"No-trade band at tolerance {no_trade_tol:.2f}")
     right.legend(frameon=False, fontsize=8.6, loc="upper left")
 
-    for ax in axes:
+    for ax in (left, delta_panel, middle, right):
         _style(ax)
     fig.tight_layout()
     return _save(fig, path)
