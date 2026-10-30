@@ -55,8 +55,12 @@ def make_norm(norm_type: str, dim: int) -> nn.Module:
     raise ValueError(f"Unknown norm_type: {norm_type}")
 
 
+def _activation(name: str) -> nn.Module:
+    return nn.ReLU() if name == "relu" else nn.LeakyReLU(0.2)
+
+
 class MLP(nn.Module):
-    # Linear + normalization + LeakyReLU stack
+    # Linear + normalization + activation stack
     def __init__(
         self,
         in_dim: int,
@@ -64,6 +68,8 @@ class MLP(nn.Module):
         n_layers: int,
         out_dim: int = 1,
         norm_type: str = "layernorm",
+        activation: str = "leaky_relu",
+        linear_head: bool = False,
     ) -> None:
         super().__init__()
         layers: list[nn.Module] = []
@@ -73,14 +79,16 @@ class MLP(nn.Module):
                 [
                     nn.Linear(dim, hidden_dim),
                     make_norm(norm_type, hidden_dim),
-                    nn.LeakyReLU(0.2),
+                    _activation(activation),
                 ]
             )
             dim = hidden_dim
         self.body = nn.Sequential(*layers)
         self.head = nn.Linear(dim, out_dim)
-        nn.init.normal_(self.head.weight, std=0.05)
-        nn.init.zeros_(self.head.bias)
+        self.linear_head = bool(linear_head)
+        if not self.linear_head:
+            nn.init.normal_(self.head.weight, std=0.05)
+            nn.init.zeros_(self.head.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.head(self.body(x))
@@ -96,10 +104,13 @@ class SharedTimeMLP(nn.Module):
         n_steps: int,
         out_dim: int = 1,
         norm_type: str = "layernorm",
+        activation: str = "leaky_relu",
+        linear_head: bool = False,
     ) -> None:
         super().__init__()
         self.linears = nn.ModuleList()
         self.norms = nn.ModuleList()
+        self.activation = str(activation)
         dim = in_dim
         for _ in range(n_layers):
             self.linears.append(nn.Linear(dim, hidden_dim))
@@ -108,13 +119,15 @@ class SharedTimeMLP(nn.Module):
             )
             dim = hidden_dim
         self.head = nn.Linear(dim, out_dim)
-        nn.init.normal_(self.head.weight, std=0.05)
-        nn.init.zeros_(self.head.bias)
+        self.linear_head = bool(linear_head)
+        if not self.linear_head:
+            nn.init.normal_(self.head.weight, std=0.05)
+            nn.init.zeros_(self.head.bias)
 
     def forward(self, x: torch.Tensor, step: int) -> torch.Tensor:
         h = x
         for linear, norm_group in zip(self.linears, self.norms):
-            h = F.leaky_relu(norm_group[step](linear(h)), 0.2)
+            h = _activation(self.activation)(norm_group[step](linear(h)))
         return self.head(h)
 
 
@@ -133,6 +146,11 @@ class DeepHedgingNetwork(nn.Module):
         time_dependent: bool = False,
         feature_dim: int = 6,
         norm_type: str = "layernorm",
+        output_dim: int = 1,
+        use_prev_delta: bool = True,
+        feature_mode: str = "engineered",
+        activation: str = "leaky_relu",
+        linear_head: bool = False,
     ) -> None:
         super().__init__()
         if n_steps < 1:
@@ -141,6 +159,12 @@ class DeepHedgingNetwork(nn.Module):
             raise ValueError("base_variance must be positive")
         if norm_type not in {"layernorm", "batchnorm"}:
             raise ValueError("norm_type must be 'layernorm' or 'batchnorm'")
+        if output_dim < 1:
+            raise ValueError("output_dim must be positive")
+        if feature_mode not in {"engineered", "paper"}:
+            raise ValueError("feature_mode must be 'engineered' or 'paper'")
+        if activation not in {"leaky_relu", "relu"}:
+            raise ValueError("activation must be 'leaky_relu' or 'relu'")
         self.n_steps = int(n_steps)
         self.K = float(K)
         self.T = float(T)
@@ -148,13 +172,26 @@ class DeepHedgingNetwork(nn.Module):
         self.dt = float(dt)
         self.max_position = float(max_position)
         self.time_dependent = bool(time_dependent)
-        self.feature_dim = int(feature_dim)
+        self.output_dim = int(output_dim)
+        self.use_prev_delta = bool(use_prev_delta)
+        self.feature_mode = str(feature_mode)
+        self.activation = str(activation)
+        self.linear_head = bool(linear_head)
         self.norm_type = str(norm_type)
+        self.feature_dim = self._feature_dim(feature_dim)
 
         if self.time_dependent:
             self.nets = nn.ModuleList(
                 [
-                    MLP(feature_dim, hidden_dim, n_layers, norm_type=self.norm_type)
+                    MLP(
+                        self.feature_dim,
+                        hidden_dim,
+                        n_layers,
+                        out_dim=self.output_dim,
+                        norm_type=self.norm_type,
+                        activation=self.activation,
+                        linear_head=self.linear_head,
+                    )
                     for _ in range(self.n_steps)
                 ]
             )
@@ -162,14 +199,29 @@ class DeepHedgingNetwork(nn.Module):
         else:
             self.nets = None
             self.shared = SharedTimeMLP(
-                feature_dim, hidden_dim, n_layers, self.n_steps, norm_type=self.norm_type
+                self.feature_dim,
+                hidden_dim,
+                n_layers,
+                self.n_steps,
+                out_dim=self.output_dim,
+                norm_type=self.norm_type,
+                activation=self.activation,
+                linear_head=self.linear_head,
             )
+
+    def _feature_dim(self, requested: int) -> int:
+        # Paper mode uses (log S, V) plus the previous position per traded instrument
+        if self.feature_mode == "paper":
+            return 2 + (self.output_dim if self.use_prev_delta else 0)
+        return int(requested) - (0 if self.use_prev_delta else 1)
 
     def _delta_from_features(self, step: int, features: torch.Tensor) -> torch.Tensor:
         if self.time_dependent:
-            raw = self.nets[step](features).squeeze(-1)
+            raw = self.nets[step](features)
         else:
-            raw = self.shared(features, step).squeeze(-1)
+            raw = self.shared(features, step)
+        if self.linear_head:
+            return raw
         return self.max_position * torch.tanh(raw)
 
     def _features(
@@ -180,6 +232,14 @@ class DeepHedgingNetwork(nn.Module):
         prev_delta: torch.Tensor,
         step: int,
     ) -> torch.Tensor:
+        if self.feature_mode == "paper":
+            # Paper Section 5.1 inputs, scaled to keep the first layer well conditioned
+            blocks = [torch.log(spot / self.K)[:, None], variance[:, None] / self.base_variance]
+            if self.use_prev_delta:
+                if prev_delta.dim() == 1:
+                    prev_delta = prev_delta[:, None]
+                blocks.append(prev_delta / self.max_position)
+            return torch.cat(blocks, dim=-1)
         vol_T = math.sqrt(self.base_variance * self.T)
         vol_dt = math.sqrt(self.base_variance * self.dt)
         moneyness = (spot / self.K - 1.0) / vol_T
@@ -187,10 +247,10 @@ class DeepHedgingNetwork(nn.Module):
         vol_scale = torch.sqrt(torch.clamp(variance, min=0.0)) * math.sqrt(self.T) / vol_T
         var_norm = variance / self.base_variance - 1.0
         time_frac = torch.full_like(spot, (self.n_steps - step) / self.n_steps)
-        prev_norm = prev_delta / self.max_position
-        return torch.stack(
-            [moneyness, log_ret_norm, vol_scale, var_norm, time_frac, prev_norm], dim=-1
-        )
+        blocks = [moneyness, log_ret_norm, vol_scale, var_norm, time_frac]
+        if self.use_prev_delta:
+            blocks.append((prev_delta / self.max_position).reshape(-1))
+        return torch.stack(blocks, dim=-1)
 
     def forward(
         self,
@@ -198,7 +258,10 @@ class DeepHedgingNetwork(nn.Module):
         variances: torch.Tensor | None = None,
         n_steps: int | None = None,
     ) -> torch.Tensor:
-        batch, n_cols = spots.shape
+        if spots.dim() not in (2, 3):
+            raise ValueError("spots must be 2D (paths, steps) or 3D (paths, steps, instruments)")
+        batch = spots.shape[0]
+        n_cols = spots.shape[1]
         horizon = self.n_steps if n_steps is None else int(n_steps)
         if not 1 <= horizon <= self.n_steps:
             raise ValueError("horizon must lie in [1, n_steps]")
@@ -206,20 +269,23 @@ class DeepHedgingNetwork(nn.Module):
             raise ValueError(f"Expected {horizon + 1} spot columns, got {n_cols}")
         if variances is not None and variances.shape[1] < horizon:
             raise ValueError("variances must provide one column per decision step")
-        prev_delta = spots.new_zeros(batch)
-        log_return = spots.new_zeros(batch)
+        # The policy is driven by the first instrument, extra columns are other legs
+        primary = spots[:, :, 0] if spots.dim() == 3 else spots
+        prev_delta = primary.new_zeros((batch, self.output_dim))
+        log_return = primary.new_zeros(batch)
         deltas: list[torch.Tensor] = []
         for k in range(horizon):
             if k > 0:
-                log_return = torch.log(spots[:, k] / spots[:, k - 1])
+                log_return = torch.log(primary[:, k] / primary[:, k - 1])
             if variances is None:
-                variance = spots.new_full((batch,), self.base_variance)
+                variance = primary.new_full((batch,), self.base_variance)
             else:
                 variance = variances[:, k]
-            features = self._features(spots[:, k], log_return, variance, prev_delta, k)
+            features = self._features(primary[:, k], log_return, variance, prev_delta, k)
             prev_delta = self._delta_from_features(k, features)
             deltas.append(prev_delta)
-        return torch.stack(deltas, dim=1)
+        stacked = torch.stack(deltas, dim=1)
+        return stacked if self.output_dim > 1 else stacked.squeeze(-1)
 
     @torch.no_grad()
     def policy_at_step(
@@ -237,11 +303,14 @@ class DeepHedgingNetwork(nn.Module):
         elif not torch.is_tensor(variance):
             variance = torch.full_like(spots, float(variance))
         if not torch.is_tensor(prev_delta):
-            prev_delta = torch.full_like(spots, float(prev_delta))
+            prev_delta = torch.full((spots.shape[0], self.output_dim), float(prev_delta))
+        elif prev_delta.dim() == 1 and self.output_dim > 1:
+            prev_delta = prev_delta[:, None].expand(-1, self.output_dim)
         if not torch.is_tensor(log_return):
             log_return = torch.full_like(spots, float(log_return))
         features = self._features(spots, log_return, variance, prev_delta, step)
-        return self._delta_from_features(step, features)
+        delta = self._delta_from_features(step, features)
+        return delta.squeeze(-1) if self.output_dim == 1 else delta
 
     def count_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)

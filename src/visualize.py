@@ -867,3 +867,80 @@ def plot_training_loss(
     _style(ax)
     fig.tight_layout()
     return _save(fig, path)
+
+def plot_price_asymptotics(payload: Mapping[str, object], results_path: str | Path) -> Path:
+    # Paper Figure 10: log price excess against log cost with a 2/3 reference slope
+    summary = payload["summary"]
+    costs = sorted(float(k) for k in summary)
+    q = float(payload["q"])
+    p0 = float(payload["p_0"])
+    positive = [c for c in costs if c > 0.0]
+    x = np.log(np.array(positive))
+    series = {
+        "vs q": (np.array([summary[f"{c:.6f}"]["entropic"]["mean"] - q for c in positive]),
+                 np.array([summary[f"{c:.6f}"]["entropic"]["std"] for c in positive])),
+        "vs p_0": (np.array([summary[f"{c:.6f}"]["entropic"]["mean"] - p0 for c in positive]),
+                   np.array([summary[f"{c:.6f}"]["entropic"]["std"] for c in positive])),
+    }
+    fit = payload["fit"]
+    if len(positive) < 2:
+        raise ValueError("at least two positive cost levels are required to fit a slope")
+    fig, axes = plt.subplots(1, 2, figsize=(13.2, 5.2), sharex=True)
+    for ax, (label, (excess, err)) in zip(axes, series.items()):
+        y = np.log(np.clip(excess, 1e-12, None))
+        rel = err / np.clip(excess, 1e-12, None)
+        n_seeds = int(summary[f"{positive[0]:.6f}"]["entropic"]["n"])
+        ax.errorbar(x, y, yerr=rel, fmt="o", color="#2b6cb0", markersize=6.5,
+                    capsize=3.5, linewidth=1.3, label=f"Deep Hedging ({n_seeds} seed mean)")
+        grid = np.linspace(x.min() - 0.05, x.max() + 0.05, 200)
+        key_free = "free_vs_q" if label == "vs q" else "free_vs_p0"
+        free = fit[key_free]
+        ax.plot(grid, free["intercept"] + free["slope"] * grid, color="#c53030", linewidth=2.0,
+                label=f"OLS slope {free['slope']:.3f}")
+        key_fixed = "fixed_two_thirds_vs_q" if label == "vs q" else "fixed_two_thirds_vs_p0"
+        fixed = fit[key_fixed]
+        ax.plot(grid, fixed["intercept"] + (2.0 / 3.0) * grid, color="#2f855a",
+                linewidth=1.8, linestyle="--", label="slope fixed at 2/3")
+        ax.set_xlabel("log(cost rate)")
+        ax.set_ylabel(f"log(p_eps - {'q' if label == 'vs q' else 'p_0'})")
+        ax.set_title(f"Price excess {label}")
+        ax.legend(frameon=False, fontsize=8.8, loc="upper left")
+        _style(ax)
+    ci_q = fit["ci_vs_q"]
+    ci_p0 = fit["ci_vs_p0"]
+    fig.suptitle(
+        f"Paper Figure 10 replication: q = {q:.4f}, p_0 = {p0:.4f}, "
+        f"slope {fit['free_vs_q']['slope']:.3f} [{ci_q['low']:.3f}, {ci_q['high']:.3f}]",
+        fontsize=11.5, color=TEXT_COLOR,
+    )
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "price_asymptotics_bs.png"))
+
+
+def plot_cost_sensitivity_5seed(payload: Mapping[str, object], results_path: str | Path) -> Path:
+    # CVaR against cost for the three strategies, five seed means with error bars
+    summary = payload["summary"]
+    costs = sorted(float(k) for k in summary)
+    fig, axes = plt.subplots(1, 2, figsize=(12.6, 5.0))
+    strategies = (("Deep Hedging", "deep", COLORS["Deep Hedging"]),
+                  ("Black-Scholes", "bs", COLORS["Black-Scholes"]),
+                  ("Leland", "leland", COLORS["Leland"]))
+    labels = (("CVaR95", "cvar_95"), ("CVaR99", "cvar_99"))
+    for ax, (title, key) in zip(axes, labels):
+        for name, prefix, color in strategies:
+            # Deep Hedging records use bare metric names, benchmarks are prefixed
+            field = key if prefix == "deep" else f"{prefix}_{key}"
+            means = np.array([summary[f"{c:.6f}"][field]["mean"] for c in costs])
+            stds = np.array([summary[f"{c:.6f}"][field]["std"] for c in costs])
+            stds = np.nan_to_num(stds, nan=0.0)
+            ax.errorbar(np.array(costs) * 100.0, means, yerr=stds, fmt="o-", color=color,
+                        markersize=5.5, capsize=3.0, linewidth=1.6, label=name)
+        ax.set_xlabel("Proportional cost rate (percent)")
+        ax.set_ylabel(title)
+        ax.set_title(f"{title} against transaction cost")
+        ax.legend(frameon=False, fontsize=9)
+        _style(ax)
+    fig.suptitle("Paper Section 5.3.1 cost grid: 5 seed mean with one standard deviation",
+                 fontsize=11.5, color=TEXT_COLOR)
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "cost_sensitivity_5seed.png"))

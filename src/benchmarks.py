@@ -26,6 +26,24 @@ def bs_delta(
     return _norm_cdf(d1)
 
 
+def bs_call_price(
+    S: float,
+    K: float,
+    r: float,
+    sigma: float,
+    tau: float,
+) -> float:
+    # Zero rate safe Black-Scholes call price
+    if tau <= 0.0:
+        return max(float(S) - float(K), 0.0)
+    sigma = max(float(sigma), 1e-8)
+    sqrt_tau = math.sqrt(tau)
+    d1 = (math.log(float(S) / float(K)) + (r + 0.5 * sigma**2) * tau) / (sigma * sqrt_tau)
+    d2 = d1 - sigma * sqrt_tau
+    ncdf = lambda z: 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+    return float(S) * ncdf(d1) - float(K) * math.exp(-r * tau) * ncdf(d2)
+
+
 def leland_volatility(sigma: float, cost_rate: float, dt: float) -> float:
     # Leland volatility adjusted for proportional costs
     if cost_rate <= 0.0:

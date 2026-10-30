@@ -44,6 +44,16 @@ class Config:
     heston_rho: float = -0.7
     antithetic: bool = True
 
+    # Paper Section 5.2 replication
+    paper_heston: bool = False
+    paper_heston_kappa: float = 1.0
+    paper_heston_theta: float = 0.04
+    paper_heston_xi: float = 2.0
+    paper_heston_rho: float = -0.7
+    paper_heston_v0: float = 0.04
+    swap_scale: float = 1000.0
+    use_prev_delta: bool = True
+
     # Evaluation
     n_eval_paths: int = 100_000
     seed: int = 42
@@ -77,6 +87,8 @@ class Config:
 
     @property
     def base_variance(self) -> float:
+        if self.paper_heston:
+            return self.paper_heston_v0
         return self.heston_v0 if self.simulator == "heston" else self.sigma**2
 
     @property
@@ -116,8 +128,18 @@ class Config:
             raise ValueError("cvar_alpha must lie in (0, 1)")
         if self.loss_type not in {"entropic", "cvar"}:
             raise ValueError("loss_type must be 'entropic' or 'cvar'")
-        if self.simulator not in {"gbm", "heston"}:
-            raise ValueError("simulator must be 'gbm' or 'heston'")
+        if self.simulator not in {"gbm", "heston", "paper_heston"}:
+            raise ValueError("simulator must be 'gbm', 'heston' or 'paper_heston'")
+        if self.paper_heston_kappa <= 0.0 or self.paper_heston_theta <= 0.0:
+            raise ValueError("paper Heston kappa and theta must be positive")
+        if self.paper_heston_xi < 0.0:
+            raise ValueError("paper_heston_xi must be non-negative")
+        if not -1.0 <= self.paper_heston_rho <= 1.0:
+            raise ValueError("paper_heston_rho must lie in [-1, 1]")
+        if self.paper_heston_v0 <= 0.0:
+            raise ValueError("paper_heston_v0 must be positive")
+        if self.swap_scale <= 0.0:
+            raise ValueError("swap_scale must be positive")
         if self.sigma <= 0.0:
             raise ValueError("sigma must be positive")
         if self.heston_v0 <= 0.0 or self.heston_theta <= 0.0:
