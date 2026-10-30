@@ -971,16 +971,21 @@ def plot_heston_fig2(
     ax.legend(frameon=False, fontsize=8.6)
     _style(ax)
     ax = axes[1]
+    # CVaR is the mean of the worst half of the loss, so negate the worst half of the PnL
     alpha = 0.5
+    k = max(1, int(np.ceil((1.0 - alpha) * deep.size)))
+    deep_cvar = -float(np.sort(deep)[:k].mean())
+    k_m = max(1, int(np.ceil((1.0 - alpha) * model_pnl.size)))
+    model_cvar = -float(np.sort(model_pnl)[:k_m].mean())
     lo = float(np.percentile(deep, 100.0 * alpha))
-    ax.hist(deep[deep <= lo], bins=60, density=False, color="#2b6cb0", alpha=0.85,
-            label="worst 50 percent, deep")
+    ax.hist(deep[deep <= lo], bins=70, density=True, color="#2b6cb0", alpha=0.85,
+            label=f"deep worst half, CVaR {deep_cvar:.3f}")
     lo_m = float(np.percentile(model_pnl, 100.0 * alpha))
-    ax.hist(model_pnl[model_pnl <= lo_m], bins=60, density=False, color="#c53030", alpha=0.5,
-            label="worst 50 percent, model")
-    ax.set_xlabel("Hedging error, tail region")
-    ax.set_ylabel("Count")
-    ax.set_title(f"CVaR 0.50: deep {deep_block['cvar_0.50']:.3f} vs model {np.mean(np.sort(model_pnl)[: max(1, model_pnl.size // 2)]):.3f}")
+    ax.hist(model_pnl[model_pnl <= lo_m], bins=70, density=True, color="#c53030", alpha=0.5,
+            label=f"model worst half, CVaR {model_cvar:.3f}")
+    ax.set_xlabel("Hedging error, worst half of the loss distribution")
+    ax.set_ylabel("Density within the tail")
+    ax.set_title("Deep hedge concentrates mass, model hedge keeps a fat left tail")
     ax.legend(frameon=False, fontsize=8.6)
     _style(ax)
     fig.suptitle("Heston, no transaction costs, stock and variance swap", fontsize=11.5,

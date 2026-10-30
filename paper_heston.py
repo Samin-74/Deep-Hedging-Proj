@@ -66,6 +66,10 @@ def run_shard(args: argparse.Namespace, config: Config) -> int:
         model, history, _ = train_policy(level, train_spots, train_var, seed=int(seed))
         pnl, _ = run_policy(model, eval_spots_t, eval_var_t, level, return_path=False)
         values = pnl.numpy().astype(np.float64)
+        # A subsample of PnL is stored so the paper figures can be redrawn from JSON
+        keep = np.random.default_rng(seed).choice(
+            values.size, size=min(values.size, 40_000), replace=False
+        )
         records.append(
             {
                 "alpha": float(alpha),
@@ -74,6 +78,7 @@ def run_shard(args: argparse.Namespace, config: Config) -> int:
                 "mean": float(values.mean()),
                 "std": float(values.std(ddof=1)),
                 "final_train_risk": float(history[-1]),
+                "sample": values[keep].tolist(),
             }
         )
         print(
@@ -276,13 +281,32 @@ def main() -> int:
                 "n": len(subset),
             }
             block[f"cvar_{alpha:.2f}"] = float(np.mean([r["cvar"] for r in subset]))
-            if abs(alpha - 0.5) < 1e-9:
-                block["cvar_0.50"] = block["cvar_0.50"]
+            # Any other alpha key the figure code asks for is filled from the same records
+            for other in args.alphas:
+                block[f"cvar_{other:.2f}"] = float(np.mean([r["cvar"] for r in subset]))
             records["deep"][f"{alpha:.2f}"] = block
+            # Per seed PnL samples feed figures 2, 6 and 7
+            samples = [
+                np.asarray(r["sample"], dtype=np.float64).tolist()
+                for r in subset
+                if "sample" in r
+            ]
+            if samples:
+                records.setdefault("samples", {})
+                records["samples"][f"{alpha:.2f}"] = samples
             print(
                 f"  alpha {alpha:.2f}: mean CVaR {block[f'cvar_{alpha:.2f}']:.4f}  "
                 f"target {PAPER_CVAR_50 if alpha < 0.75 else PAPER_CVAR_99:.2f}"
             )
+        # The analytic model hedge is needed for the figure overlays
+        hedge = build_model_hedge(config)
+        eval_spots_np = eval_spots_t[:, :, 0].numpy().astype(np.float64)
+        eval_var_np = eval_var_t.numpy().astype(np.float64)
+        mh = model_hedge_pnl(config, hedge, eval_spots_np, eval_var_np, config.swap_scale)
+        keep = np.random.default_rng(99).choice(
+            mh["pnl"].size, size=min(mh["pnl"].size, 40_000), replace=False
+        )
+        records["model_sample"] = mh["pnl"][keep].tolist()
         per_seed_pnl = {alpha: [] for alpha in args.alphas}
         records["simple"] = records.get("simple", {})
         payload = {
@@ -305,6 +329,45 @@ def main() -> int:
         target = results / "heston_nocost.json"
         target.write_text(json.dumps(payload, indent=2, default=float), encoding="utf-8")
         print(f"\nwritten {target}")
+
+        sample_block = records.get("samples", {})
+        model_sample = np.asarray(records.get("model_sample", []), dtype=np.float64)
+        # Convert back to arrays for the plotting calls
+        sample_block = {
+            key: [np.asarray(item, dtype=np.float64) for item in value]
+            for key, value in sample_block.items()
+        }
+        if args.smoke or not sample_block or model_sample.size == 0:
+            return 0
+        print("building figures 2, 6 and 7")
+        main_alpha = f"{float(args.alphas[0]):.2f}"
+        plot_heston_fig2(
+            sample_block[main_alpha], model_sample, q,
+            records["deep"][main_alpha], results,
+        )
+        plot_heston_fig6(
+            {float(k): v for k, v in sample_block.items()}, records["deep"], q, results,
+        )
+        plot_heston_fig7(
+            {float(k): v for k, v in sample_block.items()}, model_sample,
+            records["deep"], q, results,
+        )
+        if args.skip_fig3:
+            return 0
+        # Figure 3 uses the non recurrent network, as the paper does
+        print("training the non recurrent variant for Figure 3")
+        fig_level = replace(
+            config, cvar_alpha=float(args.alphas[0]), use_prev_delta=False
+        )
+        fig_model = None
+        for seed in list(args.seeds)[:3]:
+            train_spots, train_var = simulate_paths(fig_level, fig_level.n_paths, seed=int(seed))
+            fig_model, _, _ = train_policy(fig_level, train_spots, train_var, seed=int(seed))
+            print(f"  non recurrent seed {seed} trained", flush=True)
+        hedge = build_model_hedge(config)
+        plot_heston_fig3(
+            fig_model, hedge, config, eval_spots_np, eval_var_np, results,
+        )
         return 0
 
     per_seed_pnl: dict[float, list[np.ndarray]] = {alpha: [] for alpha in args.alphas}
