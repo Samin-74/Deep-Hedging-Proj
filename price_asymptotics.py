@@ -83,6 +83,7 @@ def run_level(
     record = {
         "cost": float(cost),
         "seed": int(seed),
+        "q": float(bs_call_price(level.S0, level.K, level.r, level.benchmark_sigma, level.T)),
         "entropic": entropy(deep_pnl, config.lambda_entropic),
         "mean_pnl": float(deep_pnl.mean()),
         "std_pnl": float(deep_pnl.std(unbiased=True)),

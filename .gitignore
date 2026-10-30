@@ -24,3 +24,6 @@ Thumbs.db
 
 # Run logs
 *.log
+*.err
+raw_*.json
+_scratch/

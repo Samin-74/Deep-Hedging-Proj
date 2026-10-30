@@ -35,9 +35,59 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seeds", type=int, nargs="+", default=list(DEFAULT_SEEDS))
     parser.add_argument("--alphas", type=float, nargs="+", default=[0.5, 0.99])
     parser.add_argument("--results-dir", default="results/paper")
-    parser.add_argument("--pool-points", type=int, default=60_000)
+    parser.add_argument("--shard", type=int, default=0)
+    parser.add_argument("--shards", type=int, default=1)
+    parser.add_argument("--raw-out", default=None)
+    parser.add_argument("--aggregate", type=int, default=0)
+    parser.add_argument("--skip-fig3", action="store_true")
     parser.add_argument("--smoke", action="store_true")
     return parser.parse_args()
+
+
+def run_shard(args: argparse.Namespace, config: Config) -> int:
+    # Worker mode: train the (alpha, seed) cells assigned to this shard
+    seed_everything(config.seed, deterministic=config.deterministic)
+    cells = [(a, s) for a in args.alphas for s in args.seeds]
+    seed_rank = {seed: i for i, seed in enumerate(args.seeds)}
+    mine = [cell for cell in cells if seed_rank[cell[1]] % args.shards == args.shard]
+    if not mine:
+        raise SystemExit(f"shard {args.shard} has no cells, reduce --shards")
+    print(
+        f"shard {args.shard}/{args.shards}: {len(mine)} of {len(cells)} cells, "
+        f"paths {config.n_paths:,}, epochs {config.epochs}",
+        flush=True,
+    )
+    eval_spots_t, eval_var_t = simulate_paths(config, config.n_eval_paths, seed=config.seed + 1)
+    records: list[dict[str, float]] = []
+    for alpha, seed in mine:
+        level = replace(config, cvar_alpha=float(alpha))
+        tick = time.perf_counter()
+        train_spots, train_var = simulate_paths(level, level.n_paths, seed=int(seed))
+        model, history, _ = train_policy(level, train_spots, train_var, seed=int(seed))
+        pnl, _ = run_policy(model, eval_spots_t, eval_var_t, level, return_path=False)
+        values = pnl.numpy().astype(np.float64)
+        records.append(
+            {
+                "alpha": float(alpha),
+                "seed": int(seed),
+                "cvar": cvar(values, alpha),
+                "mean": float(values.mean()),
+                "std": float(values.std(ddof=1)),
+                "final_train_risk": float(history[-1]),
+            }
+        )
+        print(
+            f"  alpha {alpha:.2f} seed {seed}  CVaR {records[-1]['cvar']:8.4f}  "
+            f"mean {records[-1]['mean']:8.4f}  {time.perf_counter() - tick:6.1f}s",
+            flush=True,
+        )
+        if args.smoke:
+            break
+    target = Path(args.raw_out or f"r2_shard{args.shard}.json")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(records, indent=2), encoding="utf-8")
+    print(f"shard {args.shard} wrote {target}", flush=True)
+    return 0
 
 
 def paper_config(args: argparse.Namespace) -> Config:
@@ -154,6 +204,8 @@ def main() -> int:
     seed_everything(config.seed, deterministic=config.deterministic)
     results = Path(config.results_path)
     results.mkdir(parents=True, exist_ok=True)
+    if args.shards > 1:
+        return run_shard(args, config)
 
     params = heston_vector(config)
     q = float(heston_call_price(config.T, config.S0, config.paper_heston_v0, config.K, params))
@@ -205,6 +257,56 @@ def main() -> int:
     )
 
     overall_started = time.perf_counter()
+
+    if args.aggregate:
+        # Aggregation only, reuse the shard records and retrain nothing
+        shard_records: list[dict] = []
+        for path in sorted(results.glob("raw_r2_shard*.json")):
+            shard_records.extend(json.loads(path.read_text(encoding="utf-8")))
+            print(f"loaded {path.name}  {len(shard_records)} records so far")
+        for alpha in args.alphas:
+            subset = [r for r in shard_records if abs(float(r["alpha"]) - alpha) < 1e-9]
+            if not subset:
+                continue
+            block = {
+                "mean": float(np.mean([r["mean"] for r in subset])),
+                "std": float(np.mean([r["std"] for r in subset])),
+                "per_seed_cvar": [float(r["cvar"]) for r in subset],
+                "per_seed_mean": [float(r["mean"]) for r in subset],
+                "n": len(subset),
+            }
+            block[f"cvar_{alpha:.2f}"] = float(np.mean([r["cvar"] for r in subset]))
+            if abs(alpha - 0.5) < 1e-9:
+                block["cvar_0.50"] = block["cvar_0.50"]
+            records["deep"][f"{alpha:.2f}"] = block
+            print(
+                f"  alpha {alpha:.2f}: mean CVaR {block[f'cvar_{alpha:.2f}']:.4f}  "
+                f"target {PAPER_CVAR_50 if alpha < 0.75 else PAPER_CVAR_99:.2f}"
+            )
+        per_seed_pnl = {alpha: [] for alpha in args.alphas}
+        records["simple"] = records.get("simple", {})
+        payload = {
+            **records,
+            "config": {
+                "simulator": "paper_heston",
+                "loss_type": "cvar",
+                "cost_rate": 0.0,
+                "n_paths": config.n_paths,
+                "n_eval_paths": config.n_eval_paths,
+                "epochs": config.epochs,
+                "hidden_dim": config.hidden_dim,
+                "n_layers": config.n_layers,
+                "swap_scale": config.swap_scale,
+                "seeds": list(args.seeds),
+                "aggregated": True,
+                "commit": "uncommitted",
+            },
+        }
+        target = results / "heston_nocost.json"
+        target.write_text(json.dumps(payload, indent=2, default=float), encoding="utf-8")
+        print(f"\nwritten {target}")
+        return 0
+
     per_seed_pnl: dict[float, list[np.ndarray]] = {alpha: [] for alpha in args.alphas}
     for alpha in args.alphas:
         level = replace(config, cvar_alpha=float(alpha))

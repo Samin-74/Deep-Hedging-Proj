@@ -1314,3 +1314,141 @@ def plot_heston_asymptotics(payload: Mapping[str, object], results_path: str | P
     )
     fig.tight_layout()
     return _save(fig, _output(results_path, "price_asymptotics_heston.png"))
+
+def plot_eda_market(payload: Mapping[str, object], results_path: str | Path) -> Path:
+    # Simulator EDA: real terminal densities and the variance law
+    market = payload["market"]
+    samples = payload["market"].get("samples", {})
+    fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.0))
+    ax = axes[0]
+    for key, label, color in (
+        ("gbm", "GBM sigma 0.2", COLORS["Black-Scholes"]),
+        ("heston", "Heston Euler, xi 0.3", COLORS["Leland"]),
+        ("paper_heston", "Paper Heston, exact CIR, xi 2", COLORS["Deep Hedging"]),
+    ):
+        values = np.asarray(samples.get(key, []), dtype=float)
+        if values.size == 0:
+            continue
+        entry = market[key]["terminal"]
+        ax.hist(values, bins=160, range=(80.0, 120.0), density=True, histtype="step",
+                linewidth=1.7, color=color,
+                label=(f"{label} (skew {entry['skew']:.2f}, "
+                       f"ex kurt {entry['excess_kurtosis']:.2f})"))
+    ax.set_yscale("log")
+    ax.set_xlabel("Terminal spot")
+    ax.set_ylabel("Density, log scale")
+    ax.set_title("Terminal spot density, real samples")
+    ax.legend(frameon=False, fontsize=8.1, loc="lower left")
+    _style(ax)
+
+    ax = axes[1]
+    # Cumulative view on a common axis, the tail mass is what separates the schemes
+    for key, label, color in (
+        ("heston", "Heston Euler, xi 0.3", COLORS["Leland"]),
+        ("paper_heston", "Paper Heston, exact CIR, xi 2", COLORS["Deep Hedging"]),
+    ):
+        values = np.asarray(samples.get(key, []), dtype=float)
+        if values.size == 0:
+            continue
+        ordered = np.sort(values)
+        cdf = np.arange(1, ordered.size + 1) / ordered.size
+        ax.plot(ordered, cdf, color=color, linewidth=1.8, label=label)
+    ax.set_xlim(80.0, 100.0)
+    ax.set_ylim(0.0, 0.20)
+    ax.axvline(100.0, color=TEXT_COLOR, linestyle=":", linewidth=1.3, label="strike 100")
+    ax.set_xlabel("Terminal spot, common axis")
+    ax.set_ylabel("Cumulative probability")
+    ax.set_title("Lower tail on a common axis: exact CIR carries more mass below 90")
+    ax.legend(frameon=False, fontsize=8.4)
+    _style(ax)
+    fig.suptitle("Simulator EDA: the paper Heston set violates Feller by design",
+                 fontsize=11.5, color=TEXT_COLOR)
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "eda_market.png"))
+
+
+def plot_eda_moments(payload: Mapping[str, object], results_path: str | Path) -> Path:
+    # Tail quantiles and standard errors of the simulated payoffs
+    market = payload["market"]
+    keys = ("gbm", "heston", "paper_heston")
+    labels = ("GBM", "Heston Euler", "Paper Heston")
+    fields = (("q01", "1 percent"), ("q05", "5 percent"), ("median", "Median"),
+              ("q95", "95 percent"), ("q99", "99 percent"))
+    fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.0))
+    ax = axes[0]
+    positions = np.arange(len(fields))
+    width = 0.26
+    colors = (COLORS["Black-Scholes"], COLORS["Leland"], COLORS["Deep Hedging"])
+    for offset, key, label, color in zip((-width, 0.0, width), keys, labels, colors):
+        entry = market[key]["payoff"]
+        ax.bar(positions + offset, [entry[f] for f, _ in fields], width, color=color,
+               alpha=0.9, label=label)
+    ax.set_xticks(positions)
+    ax.set_xticklabels([lbl for _, lbl in fields], fontsize=9.0)
+    ax.set_ylabel("Call payoff")
+    ax.set_title("Payoff quantiles by simulator")
+    ax.legend(frameon=False, fontsize=8.6)
+    _style(ax)
+
+    ax = axes[1]
+    names = []
+    ratios = []
+    for key, label in zip(keys, labels):
+        entry = market[key]["payoff"]
+        # Standard error relative to the mean, the Monte Carlo precision per payoff
+        ratios.append(abs(entry["se_mean"] / entry["mean"]) if entry["mean"] else 0.0)
+        names.append(label)
+    ax.bar(names, ratios, color=colors, alpha=0.9)
+    for i, value in enumerate(ratios):
+        ax.annotate(f"{value:.5f}", (i, value), ha="center", va="bottom", fontsize=9.0,
+                    color=TEXT_COLOR)
+    ax.set_ylabel("Standard error over mean")
+    ax.set_title("Monte Carlo precision of the mean payoff")
+    _style(ax)
+    fig.suptitle("Simulator EDA: payoff tails and Monte Carlo precision", fontsize=11.5,
+                 color=TEXT_COLOR)
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "eda_moments.png"))
+
+
+def plot_eda_results(payload: Mapping[str, object], results_path: str | Path) -> Path:
+    # Reproduced paper experiment: the price curve and the fitted 2/3 slope
+    paper = payload["paper"]["price_asymptotics_bs"]
+    levels = paper["levels"]
+    q = paper["q"]
+    costs = np.array([lvl["cost"] for lvl in levels])
+    p = np.array([lvl["p_eps_mean"] for lvl in levels])
+    err = np.array([lvl["p_eps_std"] or 0.0 for lvl in levels])
+    fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.0))
+    ax = axes[0]
+    ax.errorbar(costs * 100.0, p, yerr=err, fmt="o-", color=COLORS["Deep Hedging"],
+                markersize=6.0, capsize=3.5, linewidth=1.8, label="Indifference price p_eps")
+    ax.axhline(q, color=COLORS["Black-Scholes"], linestyle="--", linewidth=1.6,
+               label=f"Black-Scholes q = {q:.4f}")
+    ax.set_xlabel("Cost rate (percent)")
+    ax.set_ylabel("Indifference price")
+    ax.set_title("Price rises with cost, 5 seed mean")
+    ax.legend(frameon=False, fontsize=8.8)
+    _style(ax)
+
+    ax = axes[1]
+    pos = costs > 0.0
+    x = np.log(costs[pos])
+    y = np.log(np.clip(p[pos] - q, 1e-12, None))
+    ax.plot(x, y, "o", color=COLORS["Deep Hedging"], markersize=6.5, label="Observed excess")
+    line = np.linspace(x.min() - 0.05, x.max() + 0.05, 150)
+    free = paper["fit"]["free_vs_q"]
+    ax.plot(line, free["intercept"] + free["slope"] * line, color=COLORS["Black-Scholes"],
+            linewidth=2.0, label=f"OLS slope {free['slope']:.3f}")
+    fixed = paper["fit"]["fixed_two_thirds_vs_q"]
+    ax.plot(line, fixed["intercept"] + (2.0 / 3.0) * line, color=COLORS["Leland"],
+            linewidth=1.8, linestyle="--", label="slope fixed at 2/3")
+    ax.set_xlabel("log(cost rate)")
+    ax.set_ylabel("log(p_eps - q)")
+    ax.set_title("Price excess against cost")
+    ax.legend(frameon=False, fontsize=8.8)
+    _style(ax)
+    fig.suptitle("Reproduced paper experiment: Black-Scholes price asymptotics",
+                 fontsize=11.5, color=TEXT_COLOR)
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "eda_results.png"))
