@@ -99,6 +99,7 @@ def build_model(config: Config) -> DeepHedgingNetwork:
     # Two instrument mode is only used by the paper Heston study
     output_dim = 2 if config.paper_heston or config.simulator == "paper_heston" else 1
     paper_mode = output_dim > 1
+    feature_mode = "paper" if paper_mode else config.feature_mode
     return DeepHedgingNetwork(
         n_steps=config.n_steps,
         K=config.K,
@@ -112,7 +113,8 @@ def build_model(config: Config) -> DeepHedgingNetwork:
         norm_type=config.norm_type,
         output_dim=output_dim,
         use_prev_delta=config.use_prev_delta,
-        feature_mode="paper" if paper_mode else "engineered",
+        feature_mode=feature_mode,
+        activation=config.activation,
         linear_head=paper_mode,
     ).to(config.device)
 

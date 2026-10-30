@@ -38,6 +38,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seeds", type=int, nargs="+", default=list(DEFAULT_SEEDS))
     parser.add_argument("--costs", type=float, nargs="+", default=list(DEFAULT_COSTS))
     parser.add_argument("--results-dir", default="results/paper")
+    # Sharding lets several processes cover disjoint (cost, seed) cells
+    parser.add_argument("--shard", type=int, default=0)
+    parser.add_argument("--shards", type=int, default=1)
+    parser.add_argument("--raw-out", default=None)
+    parser.add_argument("--aggregate", type=int, default=0)
     parser.add_argument("--smoke", action="store_true")
     return parser.parse_args()
 
@@ -187,12 +192,50 @@ def print_table(summary: dict, q: float) -> None:
         )
 
 
+def run_shard(args: argparse.Namespace, config: Config) -> int:
+    # Worker mode: train the (cost, seed) cells assigned to this shard and dump raw records
+    seed_everything(config.seed, deterministic=config.deterministic)
+    cells = [(c, s) for c in args.costs for s in args.seeds]
+    # Shard by position in the seed list so splits stay balanced when the cost list is short
+    seed_rank = {seed: i for i, seed in enumerate(args.seeds)}
+    mine = [cell for cell in cells if seed_rank[cell[1]] % args.shards == args.shard]
+    if not mine:
+        raise SystemExit(f"shard {args.shard} has no cells, reduce --shards")
+    print(
+        f"shard {args.shard}/{args.shards}: {len(mine)} of {len(cells)} cells, "
+        f"paths {config.n_paths:,}, epochs {config.epochs}",
+        flush=True,
+    )
+    eval_spots, _ = simulate_paths(config, config.n_eval_paths, seed=config.seed + 1)
+    records: list[dict[str, float]] = []
+    for cost, seed in mine:
+        tick = time.perf_counter()
+        record = run_level(config, cost, seed, eval_spots)
+        records.append(record)
+        print(
+            f"  cost {cost:8.6f} seed {seed}  p_eps {record['entropic']:8.4f}  "
+            f"cvar95 {record['cvar_95']:8.4f}  mean {record['mean_pnl']:8.4f}  "
+            f"{time.perf_counter() - tick:6.1f}s",
+            flush=True,
+        )
+        if args.smoke:
+            break
+    target = Path(args.raw_out or f"r1_shard{args.shard}.json")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(records, indent=2), encoding="utf-8")
+    print(f"shard {args.shard} wrote {target}", flush=True)
+    return 0
+
+
 def main() -> int:
     args = parse_args()
     config = base_config(args)
     seed_everything(config.seed, deterministic=config.deterministic)
     results = Path(config.results_path)
     results.mkdir(parents=True, exist_ok=True)
+
+    if args.shards > 1:
+        return run_shard(args, config)
 
     q = float(bs_call_price(config.S0, config.K, config.r, config.benchmark_sigma, config.T))
     q_heston = float(
@@ -208,26 +251,35 @@ def main() -> int:
     print(f"Black-Scholes price q = {q:.4f} (torch)  {q_heston:.4f} (numpy)")
     print(f"martingale check E[Z] = {q:.4f}, so pi(0) = 0 and p_eps equals the entropic risk")
 
-    eval_spots, _ = simulate_paths(config, config.n_eval_paths, seed=config.seed + 1)
-    print(f"evaluation set {config.n_eval_paths:,} paths, mean payoff {float(torch.relu(eval_spots[:, -1] - config.K).mean()):.4f}")
-
-    records: list[dict[str, float]] = []
     started = time.perf_counter()
-    for cost in args.costs:
-        for seed in args.seeds:
-            tick = time.perf_counter()
-            record = run_level(config, cost, seed, eval_spots)
-            records.append(record)
-            print(
-                f"  cost {cost:8.6f} seed {seed}  p_eps {record['entropic']:8.4f}  "
-                f"cvar95 {record['cvar_95']:8.4f}  mean {record['mean_pnl']:8.4f}  "
-                f"{time.perf_counter() - tick:6.1f}s",
-                flush=True,
-            )
+    if args.aggregate:
+        # Aggregation only, no training
+        raw = sorted(results.glob("raw_r1_shard*.json"))
+        if not raw:
+            raise SystemExit("no raw shard files found, run the shards first")
+        records = []
+        for path in raw:
+            records.extend(json.loads(path.read_text(encoding="utf-8")))
+            print(f"loaded {path.name}")
+    else:
+        eval_spots, _ = simulate_paths(config, config.n_eval_paths, seed=config.seed + 1)
+        print(f"evaluation set {config.n_eval_paths:,} paths, mean payoff {float(torch.relu(eval_spots[:, -1] - config.K).mean()):.4f}")
+        records = []
+        for cost in args.costs:
+            for seed in args.seeds:
+                tick = time.perf_counter()
+                record = run_level(config, cost, seed, eval_spots)
+                records.append(record)
+                print(
+                    f"  cost {cost:8.6f} seed {seed}  p_eps {record['entropic']:8.4f}  "
+                    f"cvar95 {record['cvar_95']:8.4f}  mean {record['mean_pnl']:8.4f}  "
+                    f"{time.perf_counter() - tick:6.1f}s",
+                    flush=True,
+                )
+                if args.smoke:
+                    break
             if args.smoke:
                 break
-        if args.smoke:
-            break
 
     summary = summarise(records)
     print_table(summary, q)

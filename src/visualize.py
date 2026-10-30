@@ -944,3 +944,373 @@ def plot_cost_sensitivity_5seed(payload: Mapping[str, object], results_path: str
                  fontsize=11.5, color=TEXT_COLOR)
     fig.tight_layout()
     return _save(fig, _output(results_path, "cost_sensitivity_5seed.png"))
+
+def _hist_common(ax, values, color, label, bins=140, lo=None, hi=None):
+    lo = float(np.percentile(values, 0.1)) if lo is None else lo
+    hi = float(np.percentile(values, 99.9)) if hi is None else hi
+    ax.hist(values, bins=bins, range=(lo, hi), density=True, color=color, alpha=0.55, label=label)
+
+
+def plot_heston_fig2(
+    deep_pnls: Sequence[np.ndarray],
+    model_pnl: np.ndarray,
+    q: float,
+    deep_block: Mapping[str, float],
+    results_path: str | Path,
+) -> Path:
+    # Paper Figure 2: model hedge against the deep hedge at alpha 0.5
+    deep = np.concatenate(list(deep_pnls))
+    fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.0))
+    ax = axes[0]
+    _hist_common(ax, model_pnl, "#c53030", f"Model hedge (mean {model_pnl.mean():.3f})")
+    _hist_common(ax, deep, "#2b6cb0", f"Deep hedge (mean {deep.mean():.3f})")
+    ax.axvline(-q, color=TEXT_COLOR, linewidth=1.4, linestyle=":", label=f"-q = {-q:.3f}")
+    ax.set_xlabel("Hedging error q - Z + (delta . S)_T")
+    ax.set_ylabel("Density")
+    ax.set_title("Paper Figure 2: hedging error at alpha 0.5")
+    ax.legend(frameon=False, fontsize=8.6)
+    _style(ax)
+    ax = axes[1]
+    alpha = 0.5
+    lo = float(np.percentile(deep, 100.0 * alpha))
+    ax.hist(deep[deep <= lo], bins=60, density=False, color="#2b6cb0", alpha=0.85,
+            label="worst 50 percent, deep")
+    lo_m = float(np.percentile(model_pnl, 100.0 * alpha))
+    ax.hist(model_pnl[model_pnl <= lo_m], bins=60, density=False, color="#c53030", alpha=0.5,
+            label="worst 50 percent, model")
+    ax.set_xlabel("Hedging error, tail region")
+    ax.set_ylabel("Count")
+    ax.set_title(f"CVaR 0.50: deep {deep_block['cvar_0.50']:.3f} vs model {np.mean(np.sort(model_pnl)[: max(1, model_pnl.size // 2)]):.3f}")
+    ax.legend(frameon=False, fontsize=8.6)
+    _style(ax)
+    fig.suptitle("Heston, no transaction costs, stock and variance swap", fontsize=11.5,
+                 color=TEXT_COLOR)
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "heston_fig2.png"))
+
+
+def plot_heston_fig6(
+    per_seed_pnl: Mapping[float, Sequence[np.ndarray]],
+    deep_blocks: Mapping[str, Mapping[str, float]],
+    q: float,
+    results_path: str | Path,
+) -> Path:
+    # Paper Figure 6: alpha 0.5 and alpha 0.99 centred at their own risk measure
+    alphas = sorted(per_seed_pnl)
+    fig, axes = plt.subplots(1, len(alphas), figsize=(6.4 * len(alphas), 5.0), squeeze=False)
+    for ax, alpha in zip(axes[0], alphas):
+        values = np.concatenate(list(per_seed_pnl[alpha]))
+        block = deep_blocks[f"{alpha:.2f}"]
+        centre = block[f"cvar_{alpha:.2f}"]
+        _hist_common(ax, values, COLORS["Deep Hedging"],
+                     f"Deep hedge, CVaR {centre:.3f}")
+        ax.axvline(-centre, color=TEXT_COLOR, linewidth=1.5, linestyle="--",
+                   label=f"centred at -p = {-centre:.3f}")
+        ax.set_xlabel("Hedging error q - Z + (delta . S)_T")
+        ax.set_ylabel("Density")
+        ax.set_title(f"alpha = {alpha:.2f}   realised CVaR {centre:.3f}")
+        ax.legend(frameon=False, fontsize=8.8)
+        _style(ax)
+    fig.suptitle("Paper Figure 6: risk aversion widens the deep hedge tail", fontsize=11.5,
+                 color=TEXT_COLOR)
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "heston_fig6.png"))
+
+
+def plot_heston_fig7(
+    per_seed_pnl: Mapping[float, Sequence[np.ndarray]],
+    model_pnl: np.ndarray,
+    deep_blocks: Mapping[str, Mapping[str, float]],
+    q: float,
+    results_path: str | Path,
+) -> Path:
+    # Paper Figure 7: both policies centred at the model price q
+    alphas = sorted(per_seed_pnl)
+    fig, axes = plt.subplots(1, len(alphas), figsize=(6.4 * len(alphas), 5.0), squeeze=False)
+    for ax, alpha in zip(axes[0], alphas):
+        deep = np.concatenate(list(per_seed_pnl[alpha]))
+        _hist_common(ax, model_pnl, "#c53030", "Model hedge")
+        _hist_common(ax, deep, COLORS["Deep Hedging"], "Deep hedge")
+        ax.axvline(-q, color=TEXT_COLOR, linewidth=1.5, linestyle="--", label=f"-q = {-q:.3f}")
+        ax.set_xlabel("Hedging error q - Z + (delta . S)_T")
+        ax.set_ylabel("Density")
+        ax.set_title(
+            f"alpha = {alpha:.2f}: deep CVaR {deep_blocks[f'{alpha:.2f}'][f'cvar_{alpha:.2f}']:.3f}"
+        )
+        ax.legend(frameon=False, fontsize=8.8)
+        _style(ax)
+    fig.suptitle("Paper Figure 7: both policies centred at the model price", fontsize=11.5,
+                 color=TEXT_COLOR)
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "heston_fig7.png"))
+
+
+def plot_heston_fig3(
+    model,
+    hedge,
+    config,
+    spots: np.ndarray,
+    variances: np.ndarray,
+    results_path: str | Path,
+    step: int | None = None,
+) -> Path:
+    # Paper Figure 3: stock holding at mid horizon across spot and variance grids
+    step = config.n_steps // 2 if step is None else int(step)
+    s_grid = np.linspace(95.0, 103.0, 41)
+    v_grid = np.linspace(0.03, 0.13, 11)
+    s_mesh, v_mesh = np.meshgrid(s_grid, v_grid, indexing="ij")
+    model_delta = np.zeros_like(s_mesh)
+    with torch.no_grad():
+        flat_s = torch.as_tensor(s_mesh.reshape(-1), dtype=torch.float32)
+        flat_v = torch.as_tensor(v_mesh.reshape(-1), dtype=torch.float32)
+        prev = model.policy_at_step(flat_s, step, 0.0, variance=flat_v) if model is not None else None
+        if prev is not None:
+            # Two instrument policies expose the stock leg in the first column
+            stock = prev[:, 0] if prev.dim() == 2 else prev
+            deep_delta = stock.numpy().reshape(s_mesh.shape).astype(np.float64)
+        else:
+            deep_delta = np.zeros_like(s_mesh)
+    for i in range(s_grid.size):
+        for j in range(v_grid.size):
+            table = hedge.delta_stock[step]
+            model_delta[i, j] = hedge._bilinear(
+                table, np.array([s_grid[i]]), np.array([v_grid[j]])
+            )[0]
+    fig, axes = plt.subplots(1, 3, figsize=(16.4, 4.9))
+    panels = (
+        (model_delta, "Model hedge stock holding", "viridis"),
+        (deep_delta, "Deep hedge stock holding", "viridis"),
+        (deep_delta - model_delta, "Deep minus model", "coolwarm"),
+    )
+    for ax, (values, title, cmap) in zip(axes, panels):
+        if title.startswith("Deep minus"):
+            lim = float(np.max(np.abs(values))) or 1.0
+            image = ax.pcolormesh(s_grid, v_grid, values.T, cmap=cmap, shading="auto",
+                                 vmin=-lim, vmax=lim)
+        else:
+            image = ax.pcolormesh(s_grid, v_grid, values.T, cmap=cmap, shading="auto")
+        fig.colorbar(image, ax=ax, label="Stock position")
+        ax.set_xlabel("Spot")
+        ax.set_ylabel("Variance")
+        ax.set_title(f"{title} at step {step}")
+        _style(ax)
+    fig.suptitle("Paper Figure 3: stock holding on a spot and variance grid", fontsize=11.5,
+                 color=TEXT_COLOR)
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "heston_fig3.png"))
+
+def plot_recurrent_ablation(
+    records: Sequence[Mapping[str, object]],
+    scenarios: Sequence[Mapping[str, object]],
+    results_path: str | Path,
+) -> Path:
+    # Paper Figures 4 and 5: recurrent against simple, risk and cost side by side
+    fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.1))
+    colors = {"recurrent": COLORS["Deep Hedging"], "simple": "#dd6b20"}
+    for ax, (metric, title) in zip(
+        axes,
+        (("risk", "Risk measure of the hedging error"),
+         ("mean_cost", "Mean transaction cost")),
+    ):
+        positions = np.arange(len(scenarios))
+        width = 0.36
+        for offset, name in ((-width / 2, "recurrent"), (width / 2, "simple")):
+            means, errs = [], []
+            for scenario in scenarios:
+                subset = [
+                    r for r in records
+                    if r["scenario"] == scenario["key"]
+                    and (bool(r["recurrent"]) == (name == "recurrent"))
+                ]
+                values = np.array([float(r[metric]) for r in subset])
+                means.append(values.mean() if values.size else np.nan)
+                errs.append(values.std(ddof=1) if values.size > 1 else 0.0)
+            ax.bar(positions + offset, means, width, yerr=errs, capsize=4.0,
+                   color=colors[name], alpha=0.9, label=f"with previous position: {name}")
+        ax.set_xticks(positions)
+        ax.set_xticklabels([str(s["label"]) for s in scenarios], fontsize=9.0)
+        ax.set_ylabel(title)
+        ax.set_title(title)
+        ax.legend(frameon=False, fontsize=8.8)
+        _style(ax)
+    fig.suptitle("Paper Figures 4 and 5: recurrent against simple network, 5 seed mean",
+                 fontsize=11.5, color=TEXT_COLOR)
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "recurrent_ablation.png"))
+
+
+def plot_recurrent_histograms(
+    records: Sequence[Mapping[str, object]],
+    scenario_key: str,
+    title: str,
+    results_path: str | Path,
+    name: str,
+) -> Path:
+    # Paper Figure 5 style overlay of the two hedging error densities
+    fig, ax = plt.subplots(figsize=(8.4, 5.1))
+    for label, recurrent, color in (
+        ("recurrent", True, COLORS["Deep Hedging"]),
+        ("simple", False, "#dd6b20"),
+    ):
+        pooled = []
+        for record in records:
+            if record["scenario"] == scenario_key and bool(record["recurrent"]) == recurrent:
+                pooled.append(np.asarray(record["pnl"], dtype=np.float64))
+        if not pooled:
+            continue
+        values = np.concatenate(pooled)
+        _hist_common(ax, values, color, f"{label} (std {values.std(ddof=1):.3f})")
+    ax.set_xlabel("Hedging error -Z + (delta . S)_T - C_T")
+    ax.set_ylabel("Density")
+    ax.set_title(title)
+    ax.legend(frameon=False, fontsize=9.0)
+    _style(ax)
+    fig.tight_layout()
+    return _save(fig, _output(results_path, name))
+
+def plot_architecture_comparison(payload: Mapping[str, object], results_path: str | Path) -> Path:
+    # Paper Section 5.1 fidelity: the project default against the paper architecture
+    summary = payload["summary"]
+    variants = payload["variants"]
+    metrics = (("mean", "Mean PnL"), ("std", "Std"), ("cvar_95", "CVaR 95"),
+               ("cvar_99", "CVaR 99"), ("mean_cost", "Mean cost"))
+    fig, axes = plt.subplots(1, 2, figsize=(13.4, 5.0))
+    ax = axes[0]
+    positions = np.arange(len(metrics))
+    width = 0.38
+    for offset, variant, color in (
+        (-width / 2, variants[0], COLORS["Deep Hedging"]),
+        (width / 2, variants[1], "#dd6b20"),
+    ):
+        block = summary.get(variant["key"])
+        if not block:
+            continue
+        means = [block[m]["mean"] for m, _ in metrics]
+        errs = [np.nan_to_num(block[m]["std"]) for m, _ in metrics]
+        ax.bar(positions + offset, means, width, yerr=errs, capsize=3.5, color=color,
+               alpha=0.9, label=f"{variant['label']} ({int(block['n_params']['mean']):,} params)")
+    ax.set_xticks(positions)
+    ax.set_xticklabels([label for _, label in metrics], fontsize=9.0, rotation=12)
+    ax.set_ylabel("Value")
+    ax.set_title("Risk measures under one percent cost")
+    ax.legend(frameon=False, fontsize=8.6)
+    _style(ax)
+
+    ax = axes[1]
+    for variant, color in ((variants[0], COLORS["Deep Hedging"]), (variants[1], "#dd6b20")):
+        histories = [
+            r["history"] for r in payload["records"] if r["variant"] == variant["key"]
+        ]
+        if not histories:
+            continue
+        length = min(len(h) for h in histories)
+        stacked = np.array([h[:length] for h in histories])
+        grid = np.arange(1, length + 1)
+        ax.plot(grid, stacked.mean(axis=0), color=color, linewidth=1.9,
+                label=str(variant["label"]))
+        ax.fill_between(grid, stacked.mean(axis=0) - stacked.std(axis=0),
+                        stacked.mean(axis=0) + stacked.std(axis=0), color=color, alpha=0.15)
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Training entropic risk")
+    ax.set_title("Learning curves, mean with one standard deviation")
+    ax.legend(frameon=False, fontsize=8.8)
+    _style(ax)
+    fig.suptitle("Paper Section 5.1: architecture fidelity check", fontsize=11.5,
+                 color=TEXT_COLOR)
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "paper_architecture.png"))
+
+def plot_call_spread(payload: Mapping[str, object], results_path: str | Path) -> Path:
+    # Paper Figures 8 and 9: holdings flatten as risk aversion rises
+    grid = payload["holdings_grid"]
+    s_grid = np.array(grid["s"], dtype=float)
+    v_grid = np.array(grid["v"], dtype=float)
+    holdings = payload["holdings"]
+    model = np.array(grid["model"], dtype=float)
+    alphas = sorted(holdings)
+    fig, axes = plt.subplots(1, len(alphas) + 2, figsize=(5.2 * (len(alphas) + 2), 4.7))
+    j = int(np.argmin(np.abs(v_grid - 0.04)))
+    ax = axes[0]
+    ax.plot(s_grid, model[:, j], color="#c53030", linewidth=2.1, label="Model spread delta")
+    for key, color in zip(alphas, CURVE_COLORS):
+        ax.plot(s_grid, np.array(holdings[key], dtype=float)[:, j], color=color,
+                linewidth=1.8, label=f"Deep hedge alpha {key}")
+    ax.set_xlabel("Spot")
+    ax.set_ylabel("Spread holding")
+    ax.set_title("Holdings at variance 0.04")
+    ax.legend(frameon=False, fontsize=8.4)
+    _style(ax)
+
+    for ax, key in zip(axes[1:], alphas):
+        values = np.array(holdings[key], dtype=float)
+        vmin = float(np.min([values.min(), model.min()]))
+        vmax = float(np.max([values.max(), model.max()]))
+        image = ax.pcolormesh(s_grid, v_grid, values.T, cmap="viridis",
+                              shading="auto", vmin=vmin, vmax=vmax)
+        fig.colorbar(image, ax=ax, label="Spread holding")
+        ax.set_xlabel("Spot")
+        ax.set_ylabel("Variance")
+        ax.set_title(f"Deep hedge alpha {key} at step {grid['step']}")
+        _style(ax)
+
+    ax = axes[-1]
+    spread = np.array(holdings[alphas[-1]], dtype=float) - np.array(holdings[alphas[0]], dtype=float)
+    lim = float(np.max(np.abs(spread))) or 1.0
+    image = ax.pcolormesh(s_grid, v_grid, spread.T, cmap="coolwarm", shading="auto",
+                          vmin=-lim, vmax=lim)
+    fig.colorbar(image, ax=ax, label="Holding difference")
+    ax.set_xlabel("Spot")
+    ax.set_ylabel("Variance")
+    ax.set_title(f"alpha {alphas[-1]} minus alpha {alphas[0]}")
+    _style(ax)
+    fig.suptitle("Paper Figures 8 and 9: call spread, higher risk aversion flattens the hedge",
+                 fontsize=11.5, color=TEXT_COLOR)
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "call_spread.png"))
+
+def plot_heston_asymptotics(payload: Mapping[str, object], results_path: str | Path) -> Path:
+    # Paper Figure 11: same 2/3 scaling under Heston with two instruments
+    summary = payload["summary"]
+    costs = sorted(float(k) for k in summary)
+    q = float(payload["q"])
+    p0 = float(payload["p_0"])
+    grid = [c for c in costs if c > 0.0]
+    if len(grid) < 2:
+        raise ValueError("at least two positive cost levels are required")
+    x = np.log(np.array(grid))
+    fit = payload["fit"]
+    fig, axes = plt.subplots(1, 2, figsize=(13.2, 5.2))
+    for ax, (label, base, key_free, key_fixed) in zip(
+        axes,
+        (
+            ("vs q", q, "free_vs_q", "fixed_two_thirds_vs_q"),
+            ("vs p_0", p0, "free_vs_p0", "fixed_two_thirds_vs_p0"),
+        ),
+    ):
+        excess = np.array([summary[f"{c:.6f}"]["entropic"]["mean"] - base for c in grid])
+        err = np.array([summary[f"{c:.6f}"]["entropic"]["std"] for c in grid])
+        y = np.log(np.clip(excess, 1e-12, None))
+        ax.errorbar(x, y, yerr=err / np.clip(excess, 1e-12, None), fmt="o",
+                    color="#2b6cb0", markersize=6.5, capsize=3.5, linewidth=1.3,
+                    label="Heston deep hedge (seed mean)")
+        line = np.linspace(x.min() - 0.05, x.max() + 0.05, 200)
+        free = fit.get(key_free)
+        if free:
+            ax.plot(line, free["intercept"] + free["slope"] * line, color="#c53030",
+                    linewidth=2.0, label=f"OLS slope {free['slope']:.3f}")
+        fixed = fit.get(key_fixed)
+        if fixed:
+            ax.plot(line, fixed["intercept"] + (2.0 / 3.0) * line, color="#2f855a",
+                    linewidth=1.8, linestyle="--", label="slope fixed at 2/3")
+        ax.set_xlabel("log(cost rate)")
+        ax.set_ylabel(f"log(p_eps - {'q' if label == 'vs q' else 'p_0'})")
+        ax.set_title(f"Heston price excess {label}")
+        ax.legend(frameon=False, fontsize=8.8)
+        _style(ax)
+    fig.suptitle(
+        f"Paper Figure 11: Heston price asymptotics, q = {q:.4f}, p_0 = {p0:.4f}, "
+        f"slope {fit.get('free_vs_q', {}).get('slope', float('nan')):.3f}",
+        fontsize=11.5, color=TEXT_COLOR,
+    )
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "price_asymptotics_heston.png"))

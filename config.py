@@ -34,6 +34,8 @@ class Config:
     time_dependent: bool = False
     norm_type: str = "layernorm"
     max_position: float = 2.0
+    activation: str = "leaky_relu"
+    feature_mode: str = "engineered"
 
     # Simulator
     simulator: str = "gbm"
