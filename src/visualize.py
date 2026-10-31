@@ -1185,13 +1185,13 @@ def plot_heston_fig3(
             model_delta[i, j] = hedge._bilinear(
                 table, np.array([s_grid[i]]), np.array([v_grid[j]])
             )[0]
-    fig, axes = plt.subplots(1, 3, figsize=(16.4, 4.9))
+    fig, axes = plt.subplots(1, 4, figsize=(20.0, 4.9))
     panels = (
         (model_delta, "Model hedge stock holding", "viridis"),
         (deep_delta, "Deep hedge stock holding", "viridis"),
         (deep_delta - model_delta, "Deep minus model", "coolwarm"),
     )
-    for ax, (values, title, cmap) in zip(axes, panels):
+    for ax, (values, title, cmap) in zip(axes[:3], panels):
         if title.startswith("Deep minus"):
             lim = float(np.max(np.abs(values))) or 1.0
             image = ax.pcolormesh(s_grid, v_grid, values.T, cmap=cmap, shading="auto",
@@ -1203,6 +1203,21 @@ def plot_heston_fig3(
         ax.set_ylabel("Variance")
         ax.set_title(f"{title} at step {step}")
         _style(ax)
+    # Small multiples make the modest variance effect readable on the heatmap scale
+    ax = axes[3]
+    levels = (0.03, 0.08, 0.13)
+    colours = ("#0d6efd", "#d63384", "#fd7e14")
+    j_at = [int(np.argmin(np.abs(v_grid - level))) for level in levels]
+    for level, colour, j in zip(levels, colours, j_at):
+        ax.plot(s_grid, model_delta[:, j], color=colour, linewidth=1.6, linestyle="--",
+                label=f"model, v = {v_grid[j]:.2f}")
+        ax.plot(s_grid, deep_delta[:, j], color=colour, linewidth=1.8,
+                label=f"deep, v = {v_grid[j]:.2f}")
+    ax.set_xlabel("Spot")
+    ax.set_ylabel("Stock position")
+    ax.set_title(f"Variance slices at step {step}")
+    ax.legend(fontsize=6.6, frameon=False, ncol=2)
+    _style(ax)
     fig.suptitle("Paper Figure 3: stock holding on a spot and variance grid", fontsize=11.5,
                  color=TEXT_COLOR)
     fig.tight_layout()

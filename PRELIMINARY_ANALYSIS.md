@@ -207,8 +207,8 @@ indifference price $p(Z)$ of the claim. So the entropic risk column below is not
 it is a price in the paper's sense. Two consequences are testable and both hold:
 
 - $p(Z) \geq \mathbb{E}[Z]$, which is Proposition 3.6(ii). In the Black-Scholes setting
-  $q = \mathbb{E}[Z] = 2.2872$ and the learned price at zero cost is $p_0 = 2.3603$, so the inequality
-  holds with a gap of 0.0731. In the Heston setting $q = 1.6918$ and $p_0 = 1.8023$, a gap of 0.1090.
+  $q = \mathbb{E}[Z] = 2.2872$ and the learned price at zero cost is $p_0 = 2.3602$, so the inequality
+  holds with a gap of 0.0730. In the Heston setting $q = 1.6918$ and $p_0 = 1.8023$, a gap of 0.1104.
 - The gap $p_0 - q$ is positive and not zero, because discrete hedging is not free. This is the
   discrete-time hedging error the paper's whole framework is built to price.
 
@@ -711,7 +711,7 @@ matches the contents of the results directory.
 | `cost_sensitivity_5seed.png` | CVaR 95 and CVaR 99 against the same cost grid for Deep Hedging, Black-Scholes and Leland | Deep Hedging dominates both benchmarks at every cost level and the advantage widens with cost, which is the ordering the paper predicts |
 | `cost_sensitivity_multiseed.png` | The project's own cost sensitivity over 5 seeds at 100,000 paths and 20 epochs, CVaR 95 and CVaR 99 with one standard deviation error bars | Deep Hedging matches the analytic deltas at zero cost (3.113 against 3.118, t 0.5) and beats Leland from 0.10 percent upward, reaching a CVaR 95 gap of 0.495 at t 10.4 at one percent |
 | `heston_fig2.png` | Terminal hedging error densities for the deep hedge and the analytic model hedge at $\alpha = 0.50$, 200,000 paths | Deep hedge CVaR 1.9630 against 1.9687 for the true model hedge. The two are statistically indistinguishable, which is the correct result for two instruments and no costs |
-| `heston_fig3.png` | Stock holding of the model hedge and the non-recurrent deep hedge at step 15 over a spot and variance grid, the deep minus model difference panel, and variance slices at 0.03, 0.08 and 0.13 | The learned surface reproduces the analytic one in shape and is slightly steeper in spot: the difference is -0.010 at spot 95, crosses zero near spot 96.2, and reaches +0.057 at spot 103. At the money the deep excess over the model rises from 0.021 at variance 0.03 to 0.034 at variance 0.13, so the variance state shifts the learned correction rather than the level |
+| `heston_fig3.png` | Stock holding of the model hedge and the non-recurrent deep hedge at step 15 over a spot and variance grid, the deep minus model difference panel, and variance slices at 0.03, 0.08 and 0.13 | The learned surface reproduces the analytic one in shape and is slightly steeper in spot: the difference is -0.001 at spot 95, crosses zero near spot 95.2, and reaches +0.054 at spot 103. At the money the deep excess over the model rises from 0.009 at variance 0.03 to 0.054 at variance 0.13, so the variance state shifts the learned correction rather than the level |
 | `heston_fig6.png` | The same two policies at $\alpha = 0.99$, each centred at its own risk measure | The more risk averse deep hedge has a heavier far tail but a better 99 percent average, 2.9750 against 3.9139 for the model hedge |
 | `heston_fig7.png` | Both policies centred at the model price $q = 1.6918$ | Confirms the improvement is not a centring artifact: at a common origin the deep hedge still has the smaller tail average |
 | `price_asymptotics_heston.png` | The Figure 10 experiment repeated under the paper's Heston model with two instruments | Fitted slope 0.6017 against $2/3$. The same regime, 9 percent below the Black-Scholes fit, and no bootstrap interval is quoted because 5 cost levels are too few |
