@@ -1266,35 +1266,6 @@ def plot_recurrent_ablation(
     return _save(fig, _output(results_path, "recurrent_ablation.png"))
 
 
-def plot_recurrent_histograms(
-    records: Sequence[Mapping[str, object]],
-    scenario_key: str,
-    title: str,
-    results_path: str | Path,
-    name: str,
-) -> Path:
-    # Paper Figure 5 style overlay of the two hedging error densities
-    fig, ax = plt.subplots(figsize=(8.4, 5.1))
-    for label, recurrent, color in (
-        ("recurrent", True, COLORS["Deep Hedging"]),
-        ("simple", False, "#dd6b20"),
-    ):
-        pooled = []
-        for record in records:
-            if record["scenario"] == scenario_key and bool(record["recurrent"]) == recurrent:
-                pooled.append(np.asarray(record["pnl"], dtype=np.float64))
-        if not pooled:
-            continue
-        values = np.concatenate(pooled)
-        _hist_common(ax, values, color, f"{label} (std {values.std(ddof=1):.3f})")
-    ax.set_xlabel("Hedging error -Z + (delta . S)_T - C_T")
-    ax.set_ylabel("Density")
-    ax.set_title(title)
-    ax.legend(frameon=False, fontsize=9.0)
-    _style(ax)
-    fig.tight_layout()
-    return _save(fig, _output(results_path, name))
-
 def plot_architecture_comparison(payload: Mapping[str, object], results_path: str | Path) -> Path:
     # Paper Section 5.1 fidelity: the project default against the paper architecture
     summary = payload["summary"]

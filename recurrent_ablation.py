@@ -110,7 +110,8 @@ def run_shard(args: argparse.Namespace, config: Config) -> int:
         record["scenario"] = scenario["key"]
         record["cost_rate"] = float(scenario["cost_rate"])
         record["cvar_alpha"] = float(scenario["cvar_alpha"])
-        record["pnl"] = record["pnl"].tolist()
+        # The PnL sample is not used by any figure, so it is dropped to keep the JSON small
+        record.pop("pnl", None)
         records.append(record)
         print(
             f"  scenario {scenario['key']} seed {seed} recurrent {recurrent}  "
@@ -222,7 +223,8 @@ def main() -> int:
                     record["scenario"] = scenario["key"]
                     record["cost_rate"] = float(scenario["cost_rate"])
                     record["cvar_alpha"] = float(scenario["cvar_alpha"])
-                    record["pnl"] = record["pnl"].tolist()
+                    # The PnL sample is not used by any figure, so it is dropped to keep the JSON small
+                    record.pop("pnl", None)
                     records.append(record)
                     print(
                         f"  scenario {scenario['key']} seed {seed} recurrent {recurrent}  "
