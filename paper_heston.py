@@ -10,7 +10,7 @@ import torch
 
 from config import Config
 from main import build_model, run_policy, seed_everything, train_policy
-from src.heston import HestonParams, ModelHedge, heston_call_price
+from src.heston import HestonParams, ModelHedge, heston_call_price, validate_pricer
 from src.loss import empirical_cvar
 from src.portfolio import hedge_pnl
 from src.simulators import PaperHestonSimulator, simulate_paths
@@ -225,6 +225,19 @@ def main() -> int:
     print(f"model price q = {q:.4f}   paper reports {PAPER_Q:.2f}")
     if abs(q - PAPER_Q) > 0.02:
         raise SystemExit(f"pricer gate failed: q = {q:.6f} does not match the paper")
+
+    # Full gate: at the money, the Black-Scholes limit and a strike ladder against Monte Carlo
+    gate = validate_pricer(params, tau=config.T, spot=config.S0)
+    print("pricer validation")
+    for check in gate["checks"]:
+        print(
+            f"  {check['name']:<16} analytic {check['analytic']:9.5f}  "
+            f"reference {check['reference']:9.5f}  error {check['abs_error']:.5f}  "
+            f"tolerance {check['tolerance']:.5f}"
+        )
+    if not gate["passed"]:
+        raise SystemExit(f"pricer validation failed, worst ratio {gate['worst_ratio']:.3f}")
+    print(f"  gate passed, worst error is {gate['worst_ratio']:.2f} of tolerance")
 
     print("building the analytic model hedge grid")
     hedge = build_model_hedge(config)

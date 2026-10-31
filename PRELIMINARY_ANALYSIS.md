@@ -159,7 +159,8 @@ S&P 500 real data test), plus the paper's exact BatchNorm architecture and its $
   (separate network per step, two hidden layers of d plus 15 units, ReLU, BatchNorm, learning rate
   0.005, inputs log S and the previous position) is now implemented as `feature_mode = "paper"` and
   compared against the default in `results/paper/paper_architecture.png`. It matches the default to
-  within 0.009 entropic risk while using 15,330 parameters against 20,353.
+  within 0.009 on the final training risk and 0.032 on CVaR 95 while using 15,330 parameters against
+  20,353.
 - The default normalization is LayerNorm rather than the paper's BatchNorm. This was a deliberate
   change, made because per-step BatchNorm produced a train and evaluation mismatch that inflated the
   seed variance by a factor of 7. The BatchNorm path is retained behind `--norm batchnorm` and is what
@@ -259,17 +260,28 @@ phase adds an exact CIR transition (noncentral chi square) plus the simplified B
 exactly as the paper describes. A separate variance swap instrument is built from the running integrated
 variance plus $L(t, V_t)$. The policy trades both instruments.
 
-Pricer validation, which had to pass before any training was allowed to run:
+Pricer validation, which had to pass before any training was allowed to run. The gate is implemented as
+`validate_pricer` in `src/heston.py` and is called by `paper_heston.py` before the first training:
 
-| Quantity | Value | Reference |
-| --- | --- | --- |
-| Heston call price at $(0, 100, 0.04)$ | **1.691834** | paper $q = 1.69$ |
-| Monte Carlo payoff, 200,000 paths | 1.7017 | analytic 1.6918, within 0.6 percent |
-| Variance swap fair strike, Monte Carlo | 0.003283 | analytic 0.003288 |
-| Low vol-of-vol limit $\xi \to 0$ | 2.28715, delta 0.51136 | Black-Scholes 2.28715, delta 0.51136 |
+| Quantity | Value | Reference | Error | Tolerance |
+| --- | --- | --- | --- | --- |
+| Heston call price at $(0, 100, 0.04)$ | **1.691834** | paper $q = 1.69$ | 0.00003 | 0.001 |
+| Low vol-of-vol limit $\xi \to 0$ | 2.28749 | Black-Scholes 2.28715 | 0.00034 | 0.001 |
+| Strike 95 against Monte Carlo | 5.78030 | 5.77605 | 0.00425 | 0.02922 |
+| Strike 100 against Monte Carlo | 1.69183 | 1.69135 | 0.00049 | 0.01925 |
+| Strike 101 against Monte Carlo | 1.08137 | 1.08197 | 0.00060 | 0.01690 |
+| Strike 110 against Monte Carlo | 0.02909 | 0.02741 | 0.00167 | 0.00362 |
+| Strike 120 against Monte Carlo | 0.00113 | 0.00126 | 0.00013 | 0.00100 |
+| Variance swap fair strike, Monte Carlo | 0.003286 | analytic 0.003288 | 0.000002 | n/a |
 
-The last row is the strongest check: as $\xi$ is driven to zero the Heston pricer must collapse to
-Black-Scholes, and it does so to five decimal places.
+The worst error is 0.46 of its tolerance, so the gate passes. The $\xi \to 0$ row is the strongest
+analytic check: as the vol of vol is driven to zero the Heston pricer must collapse to Black-Scholes, and
+it does so to four decimal places. The strike ladder is the check that actually catches a wrong Lewis
+phase, because a phase sign error leaves the at the money price correct while corrupting the wings. The
+ladder uses a 480 step simulator rather than the 30 step hedging simulator, because at 30 steps the
+discretization bias at strike 101 is 0.020, which is larger than the effect being tested. At 480 steps
+that bias falls to 0.003 and the comparison is meaningful. The tolerances are four Monte Carlo standard
+errors, floored at 0.001, so the gate is a statistical test rather than a fixed absolute threshold.
 
 | Quantity | Paper | This project (5 seed) | Gap | Note |
 | --- | --- | --- | --- | --- |
@@ -425,18 +437,20 @@ corrections below.
 variant built to the paper's Section 5.1 description: a separate network per step, two hidden layers of
 $d + 15$ units, ReLU, BatchNorm, learning rate 0.005, and inputs $\log S$ plus the previous position.
 
-| Variant | Mean PnL | Std | CVaR 95 | Entropic | Mean cost | Parameters |
+| Variant | Mean PnL | Std | CVaR 95 | Final train risk | Mean cost | Parameters |
 | --- | --- | --- | --- | --- | --- | --- |
-| Project default | -3.2487 ± 0.0427 | 0.8429 | 5.0343 ± 0.1067 | 3.612 | 0.9636 | 20,353 |
-| Paper Section 5.1 | -3.2382 ± 0.0154 | 0.8621 | 5.0026 ± 0.0266 | 3.603 | 0.9533 | 15,330 |
+| Project default | -3.2487 ± 0.0427 | 0.8429 | 5.0343 ± 0.1067 | 3.612 ± 0.006 | 0.9636 | 20,353 |
+| Paper Section 5.1 | -3.2382 ± 0.0154 | 0.8621 | 5.0026 ± 0.0266 | 3.603 ± 0.004 | 0.9533 | 15,330 |
 
-The two are within 0.009 on entropic risk and 0.032 on CVaR 95, and the paper variant is marginally better
-on mean PnL, CVaR 95, entropic risk and mean cost while being marginally worse on PnL standard deviation,
-0.8621 against 0.8429. It does so using 25 percent fewer parameters and producing 2.8 times less seed
-dispersion on mean PnL. The gaps are far smaller than the seed standard deviations, so the honest reading
-is that the two architectures are indistinguishable on this budget, which is the most reassuring fidelity
-check available without reproducing the paper line by line: the architecture choice is not what drives the
-results.
+The final train risk column is the last minibatch training objective, not an evaluation entropic risk on
+a held-out set, so it measures how well each variant fits its own training paths rather than how well it
+generalizes. The two are within 0.009 on that measure and 0.032 on CVaR 95, and the paper variant is
+marginally better on mean PnL, CVaR 95, final train risk and mean cost while being marginally worse on
+PnL standard deviation, 0.8621 against 0.8429. It does so using 25 percent fewer parameters and producing
+2.8 times less seed dispersion on mean PnL. The gaps are far smaller than the seed standard deviations, so
+the honest reading is that the two architectures are indistinguishable on this budget, which is the most
+reassuring fidelity check available without reproducing the paper line by line: the architecture choice is
+not what drives the results.
 
 ### Exploratory data analysis
 
@@ -499,10 +513,12 @@ rises from 0.757 to 0.776. Both the mean shift and the dispersion increase are s
 seeds the learned policy's mean PnL is -3.252 $\pm$ 0.056 and its standard deviation is
 0.823 $\pm$ 0.044.
 
-This matches the paper's claim. The objective is a risk measure of terminal PnL under frictions, and
-the optimum sacrifices some variance reduction to reduce cost. It also shows why reporting only the
-mean would be misleading, since the improvement is a genuine shift of the loss distribution and not a
-tail-only effect.
+This is consistent with the paper's framing rather than a reproduction of one of its figures. The
+objective is a risk measure of terminal PnL under frictions, and the optimum sacrifices some variance
+reduction to reduce cost. The paper does not print a GBM cost histogram of this kind, so the figure is
+an extension of the framework rather than a replication of a specific result. It also shows why
+reporting only the mean would be misleading, since the improvement is a genuine shift of the loss
+distribution and not a tail-only effect.
 
 ### `policy_curves.png`
 
@@ -616,9 +632,10 @@ other words the learned policy is close to time homogeneous in this GBM setting,
 theory predicts when volatility is constant and the only time dependence comes from the shrinking
 time to maturity.
 
-This matches the paper. The individual trajectories show wide dispersion, with paths swinging between
-about 0.05 and 1.0, so the flat mean is an average over very heterogeneous behavior rather than a
-policy that refuses to trade.
+This is consistent with the paper's design rationale rather than a reproduction of one of its figures.
+The individual trajectories show wide dispersion, with paths swinging between about 0.05 and 1.0, so
+the flat mean is an average over very heterogeneous behavior rather than a policy that refuses to
+trade. The paper does not print a GBM position trajectory figure, so this is an extension.
 
 ### `pnl_paths.png`
 
@@ -656,7 +673,7 @@ matches the contents of the results directory.
 | `price_asymptotics_heston.png` | The Figure 10 experiment repeated under the paper's Heston model with two instruments | Fitted slope 0.6061 against $2/3$. The same regime, 9 percent below the Black-Scholes fit, and no bootstrap interval is quoted because 5 cost levels are too few |
 | `recurrent_ablation.png` | Three panels: absolute risk by variant, paired within-seed differences with standard errors, and mean transaction cost | Without cost the two variants are indistinguishable (gap -0.0001, $t = 0.06$). At 1 percent cost the recurrent network is better on risk by 0.0508 with a standard error of 0.0884, so the improvement is not significant |
 | `call_spread.png` | Stock holding at $\alpha = 0.95$ and $\alpha = 0.99$ for the call spread, the difference panel, and the two PnL distributions | Higher risk aversion flattens the hedge on 69.5 percent of the grid and raises the PnL spread from 0.2663 to 0.3896 with the mean unchanged |
-| `paper_architecture.png` | Risk measures for the project default against a paper-faithful architecture, with parameter counts | The two agree to 0.009 on entropic risk and 0.032 on CVaR 95, so the architecture choice is not what drives the reported results |
+| `paper_architecture.png` | Risk measures for the project default against a paper-faithful architecture, with parameter counts | The two agree to 0.009 on the final training risk and 0.032 on CVaR 95, so the architecture choice is not what drives the reported results |
 | `eda_market.png` | Terminal spot histograms on a log density axis and a lower-tail distribution function on a common axis for all three simulators | All three simulators are martingales to within one standard error. The paper's Heston set is strongly left skewed and heavy tailed where the project set is nearly symmetric, and its lower tail carries visibly more mass below spot 90 |
 | `eda_moments.png` | Payoff quantiles at 1, 5, 50, 95 and 99 percent by simulator, and the Monte Carlo standard error of the mean payoff as a fraction of that mean | The paper Heston payoff is lower than GBM in the upper quantiles, 5.778 against 9.712 at 95 percent and 9.969 against 14.068 at 99 percent, and higher at the median, 1.108 against 0.000, so the same mean price is carried by a much fatter body and a shorter right tail. All three simulators price their own mean payoff to a relative standard error of 0.34 percent or better at 200,000 paths |
 | `eda_results.png` | Seed standard deviation as a percentage of the mean for each metric and strategy, and the gap to Leland for each metric expressed in standard errors | Every reported gap against Leland is between 12.5 and 62.1 standard errors, so no headline claim in the main table rests on seed noise. Mean cost is the noisiest metric for the learned policy at 5.5 percent relative seed dispersion, against 1.3 percent for CVaR 95 and 0.8 percent for entropic risk |
@@ -1096,10 +1113,13 @@ numbers, and because the way they were found is itself informative.
    strikes and discovering that the rho sensitivity had the wrong sign: the pricer said a negative
    correlation raises the price of an out of the money call, the simulator said it lowers it, and the
    simulator was right. After the fix the pricer matches Monte Carlo at every strike tested: 5.78030
-   against 5.79088 at strike 95, 1.08137 against 1.08629 at 101, 0.02909 against 0.02884 at 110, and
-   0.00113 against 0.00132 at 120, with the residual explained by the simulator's 30 step
-   discretization. The $\xi \to 0$ Black-Scholes limit still holds to four decimal places. The
-   validation gate is now a strike ladder against Monte Carlo rather than a single at the money price.
+   against 5.77605 at strike 95, 1.08137 against 1.08197 at 101, 0.02909 against 0.02741 at 110, and
+   0.00113 against 0.00126 at 120, with the residual explained by the simulator's discretization. The
+   $\xi \to 0$ Black-Scholes limit still holds to four decimal places. The validation gate is now
+   `validate_pricer` in `src/heston.py`, a strike ladder against a 480 step Monte Carlo with four
+   standard error tolerances, called by `paper_heston.py` before the first training. It reports a worst
+   error of 0.46 of tolerance. The 480 step choice matters: at the 30 step hedging resolution the
+   discretization bias at strike 101 is 0.020, which is larger than the effect the gate is testing.
 2. **Heston call spread delta.** `model_spread_delta` accumulated `+grad` for both strikes instead of
    `+grad` for the long leg and `-grad` for the short leg, so it reported the delta of a straddle
    rather than a spread. The corrected surface peaks near spot 99 at 0.365, which is where a 100 by
@@ -1157,7 +1177,7 @@ price only at the money or do not use the analytic pricer at all.
   1.94, the Heston price asymptotics of Figure 11 with a slope of 0.6061, the recurrent against
   simple ablation of Figures 4 and 5, and the call spread risk aversion experiment of Figures 8 and 9.
   The paper-faithful architecture of Section 5.1 is also compared and matches the default within 0.009
-  entropic risk.
+  on the final training risk and 0.032 on CVaR 95.
 - The Heston pricer and simulator required by the paper's parameter set are now implemented and gated
   on validation. The pricer returns $q = 1.691834$ against the paper's 1.69 and collapses to
   Black-Scholes to five decimal places as the vol of vol goes to zero. The simulator uses an exact CIR

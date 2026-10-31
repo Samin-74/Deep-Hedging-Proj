@@ -121,6 +121,70 @@ def heston_call_price(
     return np.clip(price, 0.0, None).reshape(shape)
 
 
+def validate_pricer(
+    params: HestonParams | None = None,
+    tau: float = 30.0 / 365.0,
+    spot: float = 100.0,
+    strikes: tuple[float, ...] = (95.0, 100.0, 101.0, 110.0, 120.0),
+    n_paths: int = 200_000,
+    seed: int = 20240101,
+    ladder_steps: int = 480,
+    sigma_multiple: float = 4.0,
+    exact_tolerance: float = 1e-3,
+) -> dict[str, object]:
+    # Regression gate: the at the money price, the Black-Scholes limit and a strike ladder
+    params = HestonParams() if params is None else params
+    params.validate()
+    checks: list[dict[str, float]] = []
+
+    atm = float(heston_call_price(tau, spot, params.v0, spot, params))
+    checks.append({"name": "at the money", "analytic": atm, "reference": 1.6918,
+                   "abs_error": abs(atm - 1.6918), "tolerance": exact_tolerance})
+
+    # As vol of vol goes to zero the pricer must collapse to Black-Scholes
+    flat = HestonParams(kappa=params.kappa, theta=params.v0, xi=1e-6, rho=params.rho, v0=params.v0)
+    heston_flat = float(heston_call_price(tau, spot, params.v0, spot, flat))
+    bs_flat = float(black_scholes_call_price(tau, spot, params.v0, spot))
+    checks.append({"name": "xi to 0 limit", "analytic": heston_flat, "reference": bs_flat,
+                   "abs_error": abs(heston_flat - bs_flat), "tolerance": exact_tolerance})
+
+    # Strike ladder against Monte Carlo, the check that catches a wrong Lewis phase.
+    # The ladder uses a finely stepped simulator so the comparison is not dominated by
+    # the 30 step discretization bias of the hedging simulator.
+    from .simulators import PaperHestonSimulator
+
+    simulator = PaperHestonSimulator(
+        S0=spot,
+        T=tau,
+        n_steps=ladder_steps,
+        kappa=params.kappa,
+        theta=params.theta,
+        xi=params.xi,
+        rho=params.rho,
+        v0=params.v0,
+        seed=seed,
+    )
+    spots, _ = simulator.simulate(n_paths)
+    terminal = spots[:, -1]
+    for strike in strikes:
+        analytic = float(heston_call_price(tau, spot, params.v0, strike, params))
+        payoff = np.clip(terminal - strike, 0.0, None)
+        mc = float(payoff.mean())
+        mc_se = float(payoff.std(ddof=1) / math.sqrt(payoff.size))
+        # The simulator is a 30 step discretization, so the gate is a statistical one
+        checks.append({"name": f"strike {strike:.0f}", "analytic": analytic, "reference": mc,
+                       "abs_error": abs(analytic - mc), "mc_se": mc_se,
+                       "tolerance": max(sigma_multiple * mc_se, exact_tolerance)})
+
+    worst_ratio = max(float(c["abs_error"]) / float(c["tolerance"]) for c in checks)
+    return {
+        "checks": checks,
+        "worst_abs_error": max(float(c["abs_error"]) for c in checks),
+        "worst_ratio": worst_ratio,
+        "passed": worst_ratio <= 1.0,
+    }
+
+
 def black_scholes_call_price(
     tau: float,
     spot: np.ndarray | float,

@@ -27,3 +27,6 @@ Thumbs.db
 *.err
 raw_*.json
 _scratch/
+
+# Local reference material, not redistributed
+*.pdf
