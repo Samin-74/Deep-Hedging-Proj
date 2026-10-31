@@ -1,3 +1,4 @@
+import json
 import math
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -945,6 +946,38 @@ def plot_cost_sensitivity_5seed(payload: Mapping[str, object], results_path: str
     fig.tight_layout()
     return _save(fig, _output(results_path, "cost_sensitivity_5seed.png"))
 
+def plot_cost_sensitivity_multiseed(
+    payload: Mapping[str, object],
+    results_path: str | Path,
+) -> Path:
+    # CVaR against cost for the three strategies, five seed means with error bars
+    summary = payload["summary"]
+    costs = sorted(float(k) for k in summary)
+    fig, axes = plt.subplots(1, 2, figsize=(12.6, 5.0))
+    strategies = (("Deep Hedging", "deep", COLORS["Deep Hedging"]),
+                  ("Black-Scholes", "bs", COLORS["Black-Scholes"]),
+                  ("Leland", "leland", COLORS["Leland"]))
+    labels = (("CVaR 95", "cvar_95"), ("CVaR 99", "cvar_99"))
+    for ax, (title, key) in zip(axes, labels):
+        for name, prefix, color in strategies:
+            # Deep Hedging records use bare metric names, benchmarks are prefixed
+            field = f"deep_{key}" if prefix == "deep" else f"{prefix}_{key}"
+            means = np.array([summary[f"{c:.6f}"][field]["mean"] for c in costs])
+            stds = np.array([summary[f"{c:.6f}"][field]["std"] for c in costs])
+            stds = np.nan_to_num(stds, nan=0.0)
+            ax.errorbar(np.array(costs) * 100.0, means, yerr=stds, fmt="o-", color=color,
+                        markersize=5.5, capsize=3.0, linewidth=1.6, label=name)
+        ax.set_xlabel("Proportional cost rate (percent)")
+        ax.set_ylabel(title)
+        ax.set_title(f"{title} against transaction cost")
+        ax.legend(frameon=False, fontsize=9)
+        _style(ax)
+    fig.suptitle("GBM cost sensitivity: 5 seed mean with one standard deviation",
+                 fontsize=11.5, color=TEXT_COLOR)
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "cost_sensitivity_multiseed.png"))
+
+
 def _hist_common(ax, values, color, label, bins=140, lo=None, hi=None):
     lo = float(np.percentile(values, 0.1)) if lo is None else lo
     hi = float(np.percentile(values, 99.9)) if hi is None else hi
@@ -1058,6 +1091,7 @@ def plot_heston_fig3(
     variances: np.ndarray,
     results_path: str | Path,
     step: int | None = None,
+    dump: bool = True,
 ) -> Path:
     # Paper Figure 3: stock holding at mid horizon across spot and variance grids
     step = config.n_steps // 2 if step is None else int(step)
@@ -1102,18 +1136,82 @@ def plot_heston_fig3(
     fig.suptitle("Paper Figure 3: stock holding on a spot and variance grid", fontsize=11.5,
                  color=TEXT_COLOR)
     fig.tight_layout()
+    if dump:
+        # Sidecar so the figure can be redrawn without retraining
+        sidecar = {
+            "step": int(step),
+            "s_grid": s_grid.tolist(),
+            "v_grid": v_grid.tolist(),
+            "model_delta": model_delta.tolist(),
+            "deep_delta": deep_delta.tolist(),
+        }
+        Path(_output(results_path, "heston_fig3.json")).write_text(
+            json.dumps(sidecar, indent=2), encoding="utf-8"
+        )
     return _save(fig, _output(results_path, "heston_fig3.png"))
+
+def plot_heston_fig3_from_file(results_path: str | Path) -> Path | None:
+    # Redraw Figure 3 from the sidecar, no retraining
+    source = Path(_output(results_path, "heston_fig3.json"))
+    if not source.exists():
+        return None
+    data = json.loads(source.read_text(encoding="utf-8"))
+    s_grid = np.asarray(data["s_grid"], dtype=np.float64)
+    v_grid = np.asarray(data["v_grid"], dtype=np.float64)
+    model_delta = np.asarray(data["model_delta"], dtype=np.float64)
+    deep_delta = np.asarray(data["deep_delta"], dtype=np.float64)
+    step = int(data["step"])
+    fig, axes = plt.subplots(1, 4, figsize=(20.0, 4.9))
+    panels = (
+        (model_delta, "Model hedge stock holding", "viridis"),
+        (deep_delta, "Deep hedge stock holding", "viridis"),
+        (deep_delta - model_delta, "Deep minus model", "coolwarm"),
+    )
+    for ax, (values, title, cmap) in zip(axes[:3], panels):
+        if title.startswith("Deep minus"):
+            lim = float(np.max(np.abs(values))) or 1.0
+            image = ax.pcolormesh(s_grid, v_grid, values.T, cmap=cmap, shading="auto",
+                                  vmin=-lim, vmax=lim)
+        else:
+            image = ax.pcolormesh(s_grid, v_grid, values.T, cmap=cmap, shading="auto")
+        fig.colorbar(image, ax=ax, label="Stock position")
+        ax.set_xlabel("Spot")
+        ax.set_ylabel("Variance")
+        ax.set_title(f"{title} at step {step}")
+        _style(ax)
+    # Small multiples make the modest variance effect readable on the heatmap scale
+    ax = axes[3]
+    levels = (0.03, 0.08, 0.13)
+    colours = ("#0d6efd", "#d63384", "#fd7e14")
+    j_at = [int(np.argmin(np.abs(v_grid - level))) for level in levels]
+    for level, colour, j in zip(levels, colours, j_at):
+        ax.plot(s_grid, model_delta[:, j], color=colour, linewidth=1.6, linestyle="--",
+                label=f"model, v = {v_grid[j]:.2f}")
+        ax.plot(s_grid, deep_delta[:, j], color=colour, linewidth=1.8,
+                label=f"deep, v = {v_grid[j]:.2f}")
+    ax.set_xlabel("Spot")
+    ax.set_ylabel("Stock position")
+    ax.set_title(f"Variance slices at step {step}")
+    ax.legend(fontsize=6.6, frameon=False, ncol=2)
+    _style(ax)
+    fig.suptitle("Paper Figure 3: stock holding on a spot and variance grid", fontsize=11.5,
+                 color=TEXT_COLOR)
+    fig.tight_layout()
+    return _save(fig, _output(results_path, "heston_fig3.png"))
+
 
 def plot_recurrent_ablation(
     records: Sequence[Mapping[str, object]],
     scenarios: Sequence[Mapping[str, object]],
     results_path: str | Path,
 ) -> Path:
-    # Paper Figures 4 and 5: recurrent against simple, risk and cost side by side
-    fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.1))
+    # Paper Figures 4 and 5: recurrent against simple, absolute and paired difference
+    fig, axes = plt.subplots(1, 3, figsize=(16.6, 5.0))
     colors = {"recurrent": COLORS["Deep Hedging"], "simple": "#dd6b20"}
+    labels = {"recurrent": "with previous position", "simple": "memoryless"}
+
     for ax, (metric, title) in zip(
-        axes,
+        axes[:2],
         (("risk", "Risk measure of the hedging error"),
          ("mean_cost", "Mean transaction cost")),
     ):
@@ -1131,13 +1229,37 @@ def plot_recurrent_ablation(
                 means.append(values.mean() if values.size else np.nan)
                 errs.append(values.std(ddof=1) if values.size > 1 else 0.0)
             ax.bar(positions + offset, means, width, yerr=errs, capsize=4.0,
-                   color=colors[name], alpha=0.9, label=f"with previous position: {name}")
+                   color=colors[name], alpha=0.9, label=labels[name])
         ax.set_xticks(positions)
         ax.set_xticklabels([str(s["label"]) for s in scenarios], fontsize=9.0)
         ax.set_ylabel(title)
         ax.set_title(title)
-        ax.legend(frameon=False, fontsize=8.8)
+        ax.legend(frameon=False, fontsize=8.6)
         _style(ax)
+
+    # Paired difference within seed, the only way the small gaps are visible
+    ax = axes[2]
+    positions = np.arange(len(scenarios))
+    gaps, errs = [], []
+    for scenario in scenarios:
+        rec = {r["seed"]: r for r in records
+               if r["scenario"] == scenario["key"] and r["recurrent"]}
+        simp = {r["seed"]: r for r in records
+                if r["scenario"] == scenario["key"] and not r["recurrent"]}
+        shared = sorted(set(rec) & set(simp))
+        diffs = np.array([float(rec[k]["risk"]) - float(simp[k]["risk"]) for k in shared])
+        gaps.append(diffs.mean() if diffs.size else np.nan)
+        errs.append(diffs.std(ddof=1) / np.sqrt(diffs.size) if diffs.size > 1 else 0.0)
+    ax.bar(positions, gaps, 0.5, yerr=errs, capsize=5.0, color="#805ad5", alpha=0.9)
+    ax.axhline(0.0, color=TEXT_COLOR, linewidth=1.3)
+    for i, (gap, err) in enumerate(zip(gaps, errs)):
+        ax.annotate(f"{gap:+.4f}\nse {err:.4f}", (i, gap), ha="center",
+                    va="bottom" if gap >= 0 else "top", fontsize=8.6, color=TEXT_COLOR)
+    ax.set_xticks(positions)
+    ax.set_xticklabels([str(s["label"]) for s in scenarios], fontsize=9.0)
+    ax.set_ylabel("Risk gap, recurrent minus memoryless")
+    ax.set_title("Paired within seed: negative favours recurrent")
+    _style(ax)
     fig.suptitle("Paper Figures 4 and 5: recurrent against simple network, 5 seed mean",
                  fontsize=11.5, color=TEXT_COLOR)
     fig.tight_layout()
@@ -1340,10 +1462,12 @@ def plot_eda_market(payload: Mapping[str, object], results_path: str | Path) -> 
                 label=(f"{label} (skew {entry['skew']:.2f}, "
                        f"ex kurt {entry['excess_kurtosis']:.2f})"))
     ax.set_yscale("log")
+    ax.set_ylim(4e-4, 3e-1)
     ax.set_xlabel("Terminal spot")
     ax.set_ylabel("Density, log scale")
     ax.set_title("Terminal spot density, real samples")
-    ax.legend(frameon=False, fontsize=8.1, loc="lower left")
+    ax.legend(frameon=False, fontsize=7.6, loc="upper center",
+              bbox_to_anchor=(0.5, -0.13), ncol=1)
     _style(ax)
 
     ax = axes[1]
@@ -1417,43 +1541,58 @@ def plot_eda_moments(payload: Mapping[str, object], results_path: str | Path) ->
 
 
 def plot_eda_results(payload: Mapping[str, object], results_path: str | Path) -> Path:
-    # Reproduced paper experiment: the price curve and the fitted 2/3 slope
-    paper = payload["paper"]["price_asymptotics_bs"]
-    levels = paper["levels"]
-    q = paper["q"]
-    costs = np.array([lvl["cost"] for lvl in levels])
-    p = np.array([lvl["p_eps_mean"] for lvl in levels])
-    err = np.array([lvl["p_eps_std"] or 0.0 for lvl in levels])
+    # EDA on the results: seed noise floor against the gaps the documents claim
+    studies = payload["stored_studies"]
+    metrics = studies["multiseed"]["metrics"]
     fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.0))
     ax = axes[0]
-    ax.errorbar(costs * 100.0, p, yerr=err, fmt="o-", color=COLORS["Deep Hedging"],
-                markersize=6.0, capsize=3.5, linewidth=1.8, label="Indifference price p_eps")
-    ax.axhline(q, color=COLORS["Black-Scholes"], linestyle="--", linewidth=1.6,
-               label=f"Black-Scholes q = {q:.4f}")
-    ax.set_xlabel("Cost rate (percent)")
-    ax.set_ylabel("Indifference price")
-    ax.set_title("Price rises with cost, 5 seed mean")
-    ax.legend(frameon=False, fontsize=8.8)
+    # Relative seed standard deviation per strategy, the noise floor of each metric
+    names = list(metrics.keys())
+    fields = (("cvar_95", "CVaR 95"), ("cvar_99", "CVaR 99"), ("entropic", "Entropic"),
+              ("mean_pnl", "Mean PnL"), ("mean_cost", "Mean cost"))
+    positions = np.arange(len(fields))
+    width = 0.26
+    colors = (COLORS["Deep Hedging"], COLORS["Black-Scholes"], COLORS["Leland"])
+    for offset, name, color in zip((-width, 0.0, width), names, colors):
+        block = metrics[name]
+        values = []
+        for key, _ in fields:
+            mean = abs(float(block[key]["mean"]))
+            values.append(100.0 * float(block[key]["std"]) / mean if mean > 0.0 else 0.0)
+        ax.bar(positions + offset, values, width, color=color, alpha=0.9, label=name)
+    ax.set_xticks(positions)
+    ax.set_xticklabels([lbl for _, lbl in fields], fontsize=8.8)
+    ax.set_yscale("log")
+    ax.set_ylabel("Seed standard deviation, percent of mean")
+    ax.set_title("Noise floor by strategy, 5 seeds, log scale")
+    ax.legend(frameon=False, fontsize=8.4)
     _style(ax)
 
     ax = axes[1]
-    pos = costs > 0.0
-    x = np.log(costs[pos])
-    y = np.log(np.clip(p[pos] - q, 1e-12, None))
-    ax.plot(x, y, "o", color=COLORS["Deep Hedging"], markersize=6.5, label="Observed excess")
-    line = np.linspace(x.min() - 0.05, x.max() + 0.05, 150)
-    free = paper["fit"]["free_vs_q"]
-    ax.plot(line, free["intercept"] + free["slope"] * line, color=COLORS["Black-Scholes"],
-            linewidth=2.0, label=f"OLS slope {free['slope']:.3f}")
-    fixed = paper["fit"]["fixed_two_thirds_vs_q"]
-    ax.plot(line, fixed["intercept"] + (2.0 / 3.0) * line, color=COLORS["Leland"],
-            linewidth=1.8, linestyle="--", label="slope fixed at 2/3")
-    ax.set_xlabel("log(cost rate)")
-    ax.set_ylabel("log(p_eps - q)")
-    ax.set_title("Price excess against cost")
-    ax.legend(frameon=False, fontsize=8.8)
+    # The gap to Leland against the noise floor of the same metric
+    deep = metrics["Deep Hedging"]
+    base = metrics["Leland"]
+    labels = []
+    ratios = []
+    for key, label in fields:
+        gap = abs(float(base[key]["mean"]) - float(deep[key]["mean"]))
+        se = float(deep[key].get("se", 0.0))
+        labels.append(label)
+        ratios.append(gap / se if se > 0.0 else 0.0)
+    bars = ax.bar(np.arange(len(labels)), ratios, 0.6, color=COLORS["Deep Hedging"], alpha=0.9)
+    for bar, ratio in zip(bars, ratios):
+        ax.annotate(f"{ratio:.1f}", (bar.get_x() + bar.get_width() / 2.0, ratio),
+                    ha="center", va="bottom", fontsize=8.6, color=TEXT_COLOR)
+    ax.axhline(2.0, color=COLORS["Black-Scholes"], linestyle="--", linewidth=1.5,
+               label="t = 2, conventional threshold")
+    ax.set_xticks(np.arange(len(labels)))
+    ax.set_xticklabels(labels, fontsize=9.0)
+    ax.set_ylim(0.0, max(ratios) * 1.18)
+    ax.set_ylabel("Gap to Leland in standard errors")
+    ax.set_title("Every claimed gap against its own seed noise")
+    ax.legend(frameon=False, fontsize=8.6, loc="upper left")
     _style(ax)
-    fig.suptitle("Reproduced paper experiment: Black-Scholes price asymptotics",
+    fig.suptitle("EDA on the stored results: is every reported gap above the seed noise floor",
                  fontsize=11.5, color=TEXT_COLOR)
     fig.tight_layout()
     return _save(fig, _output(results_path, "eda_results.png"))

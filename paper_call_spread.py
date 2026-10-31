@@ -44,6 +44,7 @@ def paper_config(args: argparse.Namespace) -> Config:
         "paper_heston": True,
         "loss_type": "cvar",
         "cost_rate": 0.0,
+        "payoff_second_strike": float(args.k2),
         "n_paths": args.paths,
         "n_eval_paths": args.eval_paths,
         "epochs": args.epochs,
@@ -62,6 +63,14 @@ def spread_payoff(spot: torch.Tensor, k1: float, k2: float) -> torch.Tensor:
     return torch.clamp(spot - k1, min=0.0) - torch.clamp(spot - k2, min=0.0)
 
 
+def spread_pnl(spots: torch.Tensor, deltas: torch.Tensor, config: Config) -> torch.Tensor:
+    # Same PnL engine as the main study, with the call spread liability
+    return hedge_pnl(
+        spots, deltas, config.K, config.cost_rate,
+        return_path=False, second_strike=config.payoff_second_strike,
+    )["pnl"]
+
+
 def model_spread_delta(
     params: HestonParams,
     config: Config,
@@ -70,14 +79,15 @@ def model_spread_delta(
     v_grid: np.ndarray,
     n_steps: int,
 ) -> np.ndarray:
-    # Analytic spread delta from the difference of two call deltas
+    # Analytic spread delta: long the low strike call, short the high strike call
     n_s, n_v = s_grid.size, v_grid.size
     out = np.zeros((n_steps, n_s, n_v))
     d_s = s_grid[1] - s_grid[0]
+    signs = (1.0, -1.0)
     for k in range(n_steps):
         tau = config.T - k * config.dt
         total = np.zeros((n_s, n_v))
-        for strike in strikes:
+        for strike, sign in zip(strikes, signs):
             price = heston_call_price(
                 tau,
                 np.broadcast_to(s_grid[:, None], (n_s, n_v)),
@@ -86,7 +96,7 @@ def model_spread_delta(
                 params,
             )
             grad = np.gradient(price, d_s, axis=0)
-            total += grad
+            total += sign * grad
         out[k] = total
     return out
 

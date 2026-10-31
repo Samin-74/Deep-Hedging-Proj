@@ -1,10 +1,17 @@
 import torch
 
 
-def terminal_payoff(spots: torch.Tensor, K: float) -> torch.Tensor:
-    # Short European call liability written on the first instrument
+def terminal_payoff(
+    spots: torch.Tensor,
+    K: float,
+    second_strike: float | None = None,
+) -> torch.Tensor:
+    # Short European call liability on instrument 0, or a call spread when a second strike is given
     terminal = spots[:, -1] if spots.dim() == 2 else spots[:, -1, 0]
-    return torch.relu(terminal - K)
+    payoff = torch.relu(terminal - K)
+    if second_strike is not None:
+        payoff = payoff - torch.relu(terminal - float(second_strike))
+    return payoff
 
 
 def hedge_pnl(
@@ -13,6 +20,7 @@ def hedge_pnl(
     K: float,
     cost_rate: float,
     return_path: bool = True,
+    second_strike: float | None = None,
 ) -> dict[str, torch.Tensor]:
     # Discrete self-financing hedge with proportional costs in one or more instruments
     if spots.dim() not in (2, 3):
@@ -37,7 +45,7 @@ def hedge_pnl(
     n_paths = deltas.shape[0]
     gains = leg_gains.reshape(n_paths, -1).sum(dim=1)
     costs = leg_costs.reshape(n_paths, -1).sum(dim=1)
-    payoff = terminal_payoff(spots, K)
+    payoff = terminal_payoff(spots, K, second_strike)
     pnl = -payoff + gains - costs
 
     result = {

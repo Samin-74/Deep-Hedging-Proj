@@ -30,6 +30,8 @@ def print_r1(results: Path) -> None:
     records = load_records(results, "raw_r1_shard*.json")
     if not records:
         return
+    target = results / "price_asymptotics_bs.json"
+    q = float(json.loads(target.read_text(encoding="utf-8"))["q"]) if target.exists() else float("nan")
     print()
     print("R1 price asymptotics, full budget")
     header = f"{'cost':>9} {'n':>3} {'p_eps':>16} {'p - q':>9} {'CVaR95':>9} {'CVaR99':>9} {'cost':>7}"
@@ -42,10 +44,9 @@ def print_r1(results: Path) -> None:
         c95 = pm([float(r["cvar_95"]) for r in subset])
         c99 = pm([float(r["cvar_99"]) for r in subset])
         mc = pm([float(r["mean_cost"]) for r in subset])
-        q = float(subset[0].get("q", math.nan))
         print(
             f"{cost:9.6f} {len(subset):3d} {ent[0]:8.4f}+/-{ent[1]:6.4f} "
-            f"{ent[0] - q if math.isfinite(q) else float('nan'):9.4f} "
+            f"{ent[0] - q:9.4f} "
             f"{c95[0]:9.4f} {c99[0]:9.4f} {mc[0]:7.4f}"
         )
 

@@ -127,7 +127,8 @@ def calibrate_threshold(loss, model, spots, variances, config: Config) -> float:
     model.eval()
     with torch.no_grad():
         deltas = model(spots[:n_sample], None if variances is None else variances[:n_sample])
-        pnl = hedge_pnl(spots[:n_sample], deltas, config.K, config.cost_rate)["pnl"]
+        pnl = hedge_pnl(spots[:n_sample], deltas, config.K, config.cost_rate,
+                        second_strike=config.payoff_second_strike)["pnl"]
     init = var_threshold(pnl, config.cvar_alpha)
     loss.w.data.fill_(init)
     return init
@@ -164,7 +165,8 @@ def train_policy(
             batch_spots = spots[index]
             batch_var = None if variances is None else variances[index]
             deltas = model(batch_spots, batch_var)
-            pnl = hedge_pnl(batch_spots, deltas, config.K, config.cost_rate)["pnl"]
+            pnl = hedge_pnl(batch_spots, deltas, config.K, config.cost_rate,
+                            second_strike=config.payoff_second_strike)["pnl"]
             loss = loss_fn(pnl)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -207,7 +209,8 @@ def run_policy(
             sl = slice(start, start + chunk)
             var = None if variances is None else variances[sl]
             deltas = model(spots[sl], var)
-            result = hedge_pnl(spots[sl], deltas, config.K, config.cost_rate, return_path)
+            result = hedge_pnl(spots[sl], deltas, config.K, config.cost_rate, return_path,
+                               second_strike=config.payoff_second_strike)
             pnls.append(result["pnl"])
             if return_path:
                 paths.append(result["pnl_path"])
@@ -507,7 +510,8 @@ def main() -> int:
 
     with torch.no_grad():
         deep_deltas = model(eval_spots, eval_var)
-    deep_detail = hedge_pnl(eval_spots, deep_deltas, config.K, config.cost_rate)
+    deep_detail = hedge_pnl(eval_spots, deep_deltas, config.K, config.cost_rate,
+                            second_strike=config.payoff_second_strike)
     costs = {"Deep Hedging": deep_detail["costs"]}
     pnls = {"Deep Hedging": deep_pnl}
     delta_paths = {"Deep Hedging": deep_deltas}

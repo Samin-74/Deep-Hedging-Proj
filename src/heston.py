@@ -111,8 +111,9 @@ def heston_call_price(
             price[mask] = np.clip(spot_flat[mask] - float(strike), 0.0, None)
             continue
         phi = characteristic_function(nodes - 0.5j, float(value), var_flat[mask], params)
+        # Lewis phase is exp(+i u log(S / K))
         log_forward = np.log(spot_flat[mask] / float(strike))
-        phase = np.exp(-1j * nodes[None, :] * log_forward[:, None])
+        phase = np.exp(1j * nodes[None, :] * log_forward[:, None])
         integral = np.sum((phase * phi).real * kernel[None, :], axis=1)
         forward = np.sqrt(spot_flat[mask] * float(strike))
         price[mask] = spot_flat[mask] - forward * integral / math.pi

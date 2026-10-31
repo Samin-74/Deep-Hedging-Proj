@@ -15,6 +15,7 @@ from src.visualize import (
     plot_eda_results,
     plot_heston_asymptotics,
     plot_heston_fig2,
+    plot_heston_fig3_from_file,
     plot_heston_fig6,
     plot_heston_fig7,
     plot_price_asymptotics,
@@ -54,6 +55,8 @@ def regen_r2(results: Path) -> None:
                                     payload["deep"][f"{main:.2f}"], results))
         print(" ", plot_heston_fig6(samples, payload["deep"], q, results))
         print(" ", plot_heston_fig7(samples, model_sample, payload["deep"], q, results))
+    # Figure 3 is redrawn from its sidecar, no retraining
+    print(" ", plot_heston_fig3_from_file(results))
 
 
 def regen_r3(results: Path) -> None:

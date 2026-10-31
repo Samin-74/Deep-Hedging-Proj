@@ -200383,12 +200383,121 @@
       "path": "heston_multiseed.json",
       "present": true
     },
+    "price_asymptotics_bs": {
+      "path": "price_asymptotics_bs.json",
+      "present": true
+    },
     "heston_nocost": {
       "path": "heston_nocost.json",
       "present": true
+    },
+    "recurrent_ablation": {
+      "path": "recurrent_ablation.json",
+      "present": true
+    },
+    "paper_architecture": {
+      "path": "paper_architecture.json",
+      "present": true
+    },
+    "call_spread": {
+      "path": "call_spread.json",
+      "present": true
+    },
+    "price_asymptotics_heston": {
+      "path": "price_asymptotics_heston.json",
+      "present": true
     }
   },
-  "paper": {},
+  "paper": {
+    "price_asymptotics_bs": {
+      "q": 2.2871506280449694,
+      "p_0": 2.360251617431641,
+      "levels": [
+        {
+          "cost": 0.0,
+          "n": 5,
+          "p_eps_mean": 2.360251617431641,
+          "p_eps_std": 0.0006016945831323209,
+          "excess_over_q": 0.07310098938667142,
+          "cvar_95_mean": 3.1181219100952147,
+          "mean_cost_mean": 0.0
+        },
+        {
+          "cost": 0.000625,
+          "n": 5,
+          "p_eps_mean": 2.4793535232543946,
+          "p_eps_std": 0.0016438537056914205,
+          "excess_over_q": 0.19220289520942524,
+          "cvar_95_mean": 3.2520867824554442,
+          "mean_cost_mean": 0.10937774032354355
+        },
+        {
+          "cost": 0.00125,
+          "n": 5,
+          "p_eps_mean": 2.5823577880859374,
+          "p_eps_std": 0.0065936459325498555,
+          "excess_over_q": 0.29520716004096803,
+          "cvar_95_mean": 3.4148697376251222,
+          "mean_cost_mean": 0.19473241567611693
+        },
+        {
+          "cost": 0.0025,
+          "n": 5,
+          "p_eps_mean": 2.752924919128418,
+          "p_eps_std": 0.004253185164768944,
+          "excess_over_q": 0.4657742910834486,
+          "cvar_95_mean": 3.684762954711914,
+          "mean_cost_mean": 0.3317080557346344
+        },
+        {
+          "cost": 0.005,
+          "n": 5,
+          "p_eps_mean": 3.072238731384277,
+          "p_eps_std": 0.019975747912155877,
+          "excess_over_q": 0.7850881033393078,
+          "cvar_95_mean": 4.2297043800354,
+          "mean_cost_mean": 0.5565793871879577
+        },
+        {
+          "cost": 0.01,
+          "n": 5,
+          "p_eps_mean": 3.617878723144531,
+          "p_eps_std": 0.04371038547901124,
+          "excess_over_q": 1.3307280950995617,
+          "cvar_95_mean": 5.028979396820068,
+          "mean_cost_mean": 0.963658607006073
+        }
+      ],
+      "fit": {
+        "free_vs_q": {
+          "slope": 0.6994154541049834,
+          "intercept": 3.472609123295044,
+          "se": 0.018875008400352253
+        },
+        "free_vs_p0": {
+          "slope": 0.8481473282638752,
+          "intercept": 4.14612031952294,
+          "se": 0.0074988648853937445
+        },
+        "ci_vs_q": {
+          "low": 0.6360751180609658,
+          "high": 0.7577605636593506
+        },
+        "ci_vs_p0": {
+          "low": 0.8334497425573523,
+          "high": 0.865377314789801
+        },
+        "fixed_two_thirds_vs_q": {
+          "fixed_slope": 0.6666666666666666,
+          "intercept": 3.276395924397594
+        },
+        "fixed_two_thirds_vs_p0": {
+          "fixed_slope": 0.6666666666666666,
+          "intercept": 3.0587853695775657
+        }
+      }
+    }
+  },
   "config": {
     "paths": 200000,
     "commit": "uncommitted"

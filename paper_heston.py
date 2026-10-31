@@ -303,10 +303,8 @@ def main() -> int:
         eval_spots_np = eval_spots_t[:, :, 0].numpy().astype(np.float64)
         eval_var_np = eval_var_t.numpy().astype(np.float64)
         mh = model_hedge_pnl(config, hedge, eval_spots_np, eval_var_np, config.swap_scale)
-        keep = np.random.default_rng(99).choice(
-            mh["pnl"].size, size=min(mh["pnl"].size, 40_000), replace=False
-        )
-        records["model_sample"] = mh["pnl"][keep].tolist()
+        # Keep the full model hedge sample so its tail is as well resolved as the deep hedge
+        records["model_sample"] = mh["pnl"].tolist()
         per_seed_pnl = {alpha: [] for alpha in args.alphas}
         records["simple"] = records.get("simple", {})
         payload = {

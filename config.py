@@ -55,6 +55,7 @@ class Config:
     paper_heston_v0: float = 0.04
     swap_scale: float = 1000.0
     use_prev_delta: bool = True
+    payoff_second_strike: float | None = None
 
     # Evaluation
     n_eval_paths: int = 100_000
@@ -142,6 +143,9 @@ class Config:
             raise ValueError("paper_heston_v0 must be positive")
         if self.swap_scale <= 0.0:
             raise ValueError("swap_scale must be positive")
+        if self.payoff_second_strike is not None:
+            if self.payoff_second_strike <= self.K:
+                raise ValueError("payoff_second_strike must exceed K for a call spread")
         if self.sigma <= 0.0:
             raise ValueError("sigma must be positive")
         if self.heston_v0 <= 0.0 or self.heston_theta <= 0.0:
