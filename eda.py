@@ -175,6 +175,27 @@ def eda_results(results_dir: Path) -> dict[str, object]:
             "config": payload.get("config", {}),
             "metrics": errors,
         }
+        # Paired per-seed gaps, the statistic the write-up quotes
+        per_seed = payload.get("per_seed", [])
+        if per_seed:
+            paired = {}
+            for metric in ("mean_pnl", "std_pnl", "cvar_95", "cvar_99", "entropic", "mean_cost"):
+                gaps = [
+                    float(row["Leland"][metric]) - float(row["Deep Hedging"][metric])
+                    for row in per_seed
+                ]
+                mean_gap = sum(gaps) / len(gaps)
+                if len(gaps) > 1:
+                    var = sum((g - mean_gap) ** 2 for g in gaps) / (len(gaps) - 1)
+                    se_gap = math.sqrt(var / len(gaps))
+                else:
+                    se_gap = 0.0
+                paired[metric] = {
+                    "gap": mean_gap,
+                    "se": se_gap,
+                    "t": mean_gap / se_gap if se_gap > 0.0 else None,
+                }
+            out["multiseed"]["paired_vs_leland"] = paired
         # Relative seed noise, the quantity that governs how many seeds are needed
         noise = {
             strategy: {

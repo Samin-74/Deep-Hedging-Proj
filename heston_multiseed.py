@@ -60,6 +60,9 @@ def main() -> int:
     paths = int(sys.argv[1]) if len(sys.argv) > 1 else 100_000
     epochs = int(sys.argv[2]) if len(sys.argv) > 2 else 20
     output = sys.argv[3] if len(sys.argv) > 3 else "results/heston_multiseed.json"
+    shard = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+    shards = int(sys.argv[5]) if len(sys.argv) > 5 else 1
+    raw_out = sys.argv[6] if len(sys.argv) > 6 else None
 
     config = replace(Config(), simulator="heston", n_paths=paths, epochs=epochs)
     config.validate()
@@ -73,15 +76,25 @@ def main() -> int:
         f"xi {config.heston_xi:.2f}  rho {config.heston_rho:.2f}"
     )
     print(f"paths {paths:,}  epochs {epochs}  seeds {list(SEEDS)}  levels {config.cost_levels}")
+    print(f"shard {shard} of {shards}")
     print("=" * 78)
 
     started = time.perf_counter()
     per_level: dict[str, dict] = {}
     for cost in config.cost_levels:
-        print(f"  cost level {100.0 * cost:5.2f} percent")
-        records = run_level(config, cost, SEEDS)
+        # Shard by seed rank so every cost level keeps the same seed coverage
+        assigned = [s for i, s in enumerate(SEEDS) if i % shards == shard]
+        if not assigned:
+            continue
+        print(f"  cost level {100.0 * cost:5.2f} percent  seeds {assigned}")
+        records = run_level(config, cost, assigned)
         summary = aggregate(records, METRICS)
         per_level[f"{cost:.4f}"] = {"records": records, "summary": summary}
+
+    if raw_out is not None:
+        Path(raw_out).write_text(json.dumps(per_level, indent=2), encoding="utf-8")
+        print(f"shard written to {raw_out}")
+        return 0
 
     rows = []
     for cost in config.cost_levels:
@@ -132,6 +145,7 @@ def main() -> int:
 
     results = Path("results")
     figures = [
+        plot_heston_cost_sweep({"levels": per_level}, results),
         plot_heston_policy(model, main_cfg, eval_spots, eval_var, results),
         plot_heston_diagnostics(eval_spots, eval_var, deltas, results),
     ]

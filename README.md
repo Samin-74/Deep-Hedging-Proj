@@ -90,7 +90,17 @@ python plot_lambda_frontier.py
 sensitivity over 5 seeds and writes `results/gbm_cost_multiseed.json` and
 `results/cost_sensitivity_multiseed.png`. `shared_vs_timedep.py` runs the weight-sharing comparison over
 5 seeds and writes `results/shared_vs_timedep.json`. Both accept `--shards N --shard i` and
-`--aggregate 1` in the same way as the paper runners.
+`--aggregate 1` in the same way as the paper runners. `merge_shards.py` combines the per shard files of
+the four derived studies (`lambda`, `heston`, `gbm_cost`, `shared`) into their final JSON.
+`regen_heston_figures.py` retrains one seed 42 Heston model and redraws the three Heston figures from
+it, which is the cheapest way to refresh them after a code change.
+
+Every figure that carries a numeric claim writes a JSON sidecar beside itself, so the claim can be
+checked without retraining: `policy_curves.json`, `position_dynamics.json`, `learning_curves.json`,
+`heston_policy_curves.json` and `heston_diagnostics.json`. The canonical single-seed console output is
+persisted in `results/canonical_run.json`, and the superseded BatchNorm study is kept as
+`results/batchnorm_multiseed.json` so the normalization comparison can be checked against its original
+source.
 
 ## Paper reproduction
 
@@ -118,15 +128,15 @@ retraining. `regen_paper_figures.py` redraws every figure from the stored JSON a
 
 | File | Paper experiment |
 | --- | --- |
-| `price_asymptotics_bs.png` | Figure 10, Black-Scholes price asymptotics. Fitted slope 0.6994, 95 percent CI [0.6361, 0.7578], contains 2/3 |
+| `price_asymptotics_bs.png` | Figure 10, Black-Scholes price asymptotics. Fitted slope 0.6898, 95 percent CI [0.6362, 0.7353], contains 2/3 |
 | `cost_sensitivity_5seed.png` | The same cost grid as CVaR for all three strategies |
 | `heston_fig2.png` | Figure 2, model hedge against deep hedge at alpha 0.5 |
 | `heston_fig3.png` | Figure 3, stock holding on a spot and variance grid, with a difference panel and variance slices. Surfaces are stored in `heston_fig3.json` so the figure can be redrawn without retraining |
 | `heston_fig6.png` | Figure 6, alpha 0.5 against alpha 0.99, each centred at its own risk measure |
 | `heston_fig7.png` | Figure 7, both centred at the model price |
-| `price_asymptotics_heston.png` | Figure 11, Heston price asymptotics. Fitted slope 0.6061 |
+| `price_asymptotics_heston.png` | Figure 11, Heston price asymptotics. Fitted slope 0.6017 |
 | `recurrent_ablation.png` | Figures 4 and 5, recurrent against simple network |
-| `call_spread.png` | Figures 8 and 9, call spread and risk aversion |
+| `call_spread.png` | Figures 8 and 9, call spread and risk aversion. The alpha 0.99 policy collapses to a near constant position and is worse on every risk measure, so this experiment does not reproduce |
 | `paper_architecture.png` | Section 5.1 fidelity comparison |
 | `eda_market.png`, `eda_moments.png`, `eda_results.png` | Exploratory analysis of the simulators, the payoff tails and the seed noise against the reported gaps |
 
@@ -151,12 +161,12 @@ Mean over 5 seeds (42 to 46), 100,000 training paths and 20 epochs, on the paper
 | Quantity | Paper | This project | Difference |
 | --- | --- | --- | --- |
 | Heston model price $q$ | 1.69 | 1.6918 | +0.0018, the paper's rounding |
-| Heston $p_\theta$ at $\alpha = 0.50$ | 1.94 | 1.9637 ± 0.0044 | +0.0237, 1.2 percent high |
-| Heston $p_\theta$ at $\alpha = 0.99$ | 3.49 | 3.0066 ± 0.0901 | -0.4834, 13.9 percent low |
-| Figure 10 fitted log-log slope | 2/3 | 0.6994, 95 percent CI [0.6361, 0.7578] | Consistent with 2/3 |
-| Figure 11 fitted log-log slope | 2/3 | 0.6061 | Close, 9 percent below |
+| Heston $p_\theta$ at $\alpha = 0.50$ | 1.94 | 1.9630 ± 0.0053 | +0.0230, 1.2 percent high |
+| Heston $p_\theta$ at $\alpha = 0.99$ | 3.49 | 2.9750 ± 0.0740 | -0.5150, 14.8 percent low |
+| Figure 10 fitted log-log slope | 2/3 | 0.6898, 95 percent CI [0.6362, 0.7353] | Consistent with 2/3 |
+| Figure 11 fitted log-log slope | 2/3 | 0.6017 | Close, 10 percent below |
 | Black-Scholes price $q$ | not printed | 2.2872 | Matches `bs_call_price` exactly |
-| Learned price at zero cost $p_0$ | not printed | 2.3603 ± 0.0006 | Exceeds $q$, as Proposition 3.6(ii) requires |
+| Learned price at zero cost $p_0$ | not printed | 2.3602 ± 0.0005 | Exceeds $q$, as Proposition 3.6(ii) requires |
 
 ## Multi-seed study
 
@@ -177,9 +187,9 @@ reduced-budget smoke test against a results path will overwrite it.
 The policy uses LayerNorm by default. Per-step BatchNorm was the original choice but it normalizes
 with batch statistics during training and with lagged running statistics at evaluation, and the two
 diverge as the policy sharpens. That mismatch inflated the seed-to-seed standard deviation of the risk
-measures by a factor of 7 and produced a 0.55 train and evaluation gap on one seed. LayerNorm has no
-running statistics, so both modes are identical by construction. Pass `--norm batchnorm` to reproduce
-the earlier behaviour.
+measures by a factor of 5 to 59 depending on the metric, and produced a 0.385 train and evaluation gap
+on one seed. LayerNorm has no running statistics, so both modes are identical by construction. Pass
+`--norm batchnorm` to reproduce the earlier behaviour.
 
 ## Outputs
 

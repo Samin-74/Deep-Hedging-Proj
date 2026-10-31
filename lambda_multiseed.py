@@ -65,6 +65,9 @@ def main() -> int:
     paths = int(sys.argv[2]) if len(sys.argv) > 2 else 100_000
     epochs = int(sys.argv[3]) if len(sys.argv) > 3 else 20
     output = sys.argv[4] if len(sys.argv) > 4 else "results/lambda_multiseed.json"
+    shard = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+    shards = int(sys.argv[6]) if len(sys.argv) > 6 else 1
+    raw_out = sys.argv[7] if len(sys.argv) > 7 else None
 
     config = replace(Config(), n_paths=paths, epochs=epochs)
     config.validate()
@@ -74,14 +77,24 @@ def main() -> int:
     print("Multi-seed entropic risk aversion sweep")
     print("=" * 78)
     print(f"lambdas {lambdas}  paths {paths:,}  epochs {epochs}  seeds {list(SEEDS)}")
+    print(f"shard {shard} of {shards}")
     print("=" * 78)
 
     started = time.perf_counter()
     per_lambda: dict[str, dict] = {}
     for lam in lambdas:
-        print(f"  lambda {lam:4.2f}")
-        records = run_lambda(config, lam, SEEDS)
+        # Shard by seed rank so every lambda keeps the same seed coverage
+        assigned = [s for i, s in enumerate(SEEDS) if i % shards == shard]
+        if not assigned:
+            continue
+        print(f"  lambda {lam:4.2f}  seeds {assigned}")
+        records = run_lambda(config, lam, assigned)
         per_lambda[f"{lam:.4f}"] = {"records": records, "summary": aggregate(records, METRICS)}
+
+    if raw_out is not None:
+        Path(raw_out).write_text(json.dumps(per_lambda, indent=2), encoding="utf-8")
+        print(f"shard written to {raw_out}")
+        return 0
 
     rows = []
     for lam in lambdas:

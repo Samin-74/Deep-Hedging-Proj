@@ -241,6 +241,19 @@ def plot_policy_curves(
         _style(ax)
     on_path.set_ylabel("Hedge position")
     fig.tight_layout()
+    # Sidecar so the no-trade band and probe claims can be checked without retraining
+    sidecar = {
+        "step": int(step),
+        "spot_grid": x.tolist(),
+        "prev_deltas": [float(p) for p in prev_deltas],
+        "curves": [c.numpy().tolist() for c in curves],
+        "no_trade_tol": float(no_trade_tol),
+        "bs_delta": reference_bs.numpy().tolist(),
+        "leland_delta": reference_leland.numpy().tolist(),
+    }
+    Path(_output(results_path, "policy_curves.json")).write_text(
+        json.dumps(sidecar), encoding="utf-8"
+    )
     return _save(fig, path)
 
 
@@ -344,6 +357,17 @@ def plot_learning_curves(
     for ax in axes:
         _style(ax)
     fig.tight_layout()
+    # Sidecar so the expected shortfall ladder can be checked without retraining
+    sidecar = {
+        "alphas": [float(a) for a in alphas],
+        "expected_shortfall": {
+            name: [float(empirical_cvar(values, float(a))) for a in alphas]
+            for name, values in series.items()
+        },
+    }
+    Path(_output(results_path, "learning_curves.json")).write_text(
+        json.dumps(sidecar), encoding="utf-8"
+    )
     return _save(fig, path)
 
 
@@ -419,6 +443,17 @@ def plot_position_dynamics(
     for ax in axes:
         _style(ax)
     fig.tight_layout()
+    # Sidecar so the trajectory claims can be checked without retraining
+    sidecar = {
+        "deep_mean": deltas.mean(dim=0).tolist(),
+        "benchmark_mean": {
+            name: torch.as_tensor(values).detach().cpu().mean(dim=0).tolist()
+            for name, values in benchmark_deltas.items()
+        },
+    }
+    Path(_output(results_path, "position_dynamics.json")).write_text(
+        json.dumps(sidecar), encoding="utf-8"
+    )
     return _save(fig, path)
 
 
@@ -693,13 +728,16 @@ def plot_heston_policy(
     middle.legend(frameon=False, fontsize=8.6, loc="upper left")
 
     right.axhspan(-no_trade_tol, no_trade_tol, color="#cbd5e0", alpha=0.55, zorder=0)
+    trade_curves = {}
     for color, prev in zip(CURVE_COLORS, prev_deltas):
         variance = torch.full_like(spots, float(vol_levels[len(vol_levels) // 2]) ** 2)
         with torch.no_grad():
             curve = model.policy_at_step(spots, step, float(prev), variance=variance)
+        trade = (curve - float(prev)).numpy()
+        trade_curves[f"{float(prev):.2f}"] = trade.tolist()
         right.plot(
             x,
-            (curve - float(prev)).numpy(),
+            trade,
             color=color,
             linewidth=2.0,
             label=f"Previous position {prev:.2f}",
@@ -713,6 +751,21 @@ def plot_heston_policy(
     for ax in (left, delta_panel, middle, right):
         _style(ax)
     fig.tight_layout()
+    # Sidecar so the numeric claims about the surface can be checked without retraining
+    sidecar = {
+        "step": int(step),
+        "spot_grid": x.tolist(),
+        "vol_grid": vol_grid.tolist(),
+        "surface": surface.tolist(),
+        "vol_levels": [float(v) for v in vol_levels],
+        "prev_deltas": [float(p) for p in prev_deltas],
+        "baseline_vol": baseline_vol,
+        "no_trade_tol": float(no_trade_tol),
+        "trade_curves": trade_curves,
+    }
+    Path(_output(results_path, "heston_policy_curves.json")).write_text(
+        json.dumps(sidecar), encoding="utf-8"
+    )
     return _save(fig, path)
 
 
@@ -783,33 +836,50 @@ def plot_heston_diagnostics(
     for ax in axes:
         _style(ax)
     fig.tight_layout()
+    # Sidecar so the volatility and moneyness ordering claims can be checked
+    sidecar = {
+        "vol_now": vol_now[keep].tolist(),
+        "moneyness": moneyness[keep].tolist(),
+        "delta_now": delta_now[keep].tolist(),
+        "step_now": np.tile(steps[:-1], deltas.shape[0])[keep].tolist(),
+    }
+    Path(_output(results_path, "heston_diagnostics.json")).write_text(
+        json.dumps(sidecar), encoding="utf-8"
+    )
     return _save(fig, path)
 
 
 def plot_heston_cost_sweep(
-    records: Sequence[Mapping[str, float]],
+    payload: Mapping[str, object],
     results_path: str | Path,
 ) -> Path:
-    # Heston CVaR across cost levels, same layout as the GBM study
-    if not records:
-        raise ValueError("records must not be empty")
+    # Heston CVaR across cost levels, 5 seed means with error bars
+    levels = payload["levels"]
+    if not levels:
+        raise ValueError("levels must not be empty")
     path = _output(results_path, "heston_cost_sensitivity.png")
-    costs = [100.0 * float(r["cost"]) for r in records]
+    costs = sorted(float(k) for k in levels)
     strategies = (
-        ("Deep Hedging", "deep"),
-        ("Black-Scholes", "bs"),
-        ("Leland", "leland"),
+        ("Deep Hedging", "deep", COLORS["Deep Hedging"]),
+        ("Black-Scholes", "bs", COLORS["Black-Scholes"]),
+        ("Leland", "leland", COLORS["Leland"]),
     )
     fig, axes = plt.subplots(1, 2, figsize=(12.8, 5.6))
     for ax, quantile in zip(axes, (95, 99)):
-        for label, prefix in strategies:
-            values = [float(r[f"{prefix}_cvar_{quantile}"]) for r in records]
-            ax.plot(costs, values, marker="o", markersize=5.5, linewidth=1.9, color=COLORS[label], label=label)
+        for label, prefix, color in strategies:
+            field = f"deep_cvar_{quantile}" if prefix == "deep" else f"{prefix}_cvar_{quantile}"
+            means = np.array([levels[f"{c:.4f}"]["summary"][field]["mean"] for c in costs])
+            stds = np.array([levels[f"{c:.4f}"]["summary"][field]["std"] for c in costs])
+            ax.errorbar(np.array(costs) * 100.0, means, yerr=np.nan_to_num(stds, nan=0.0),
+                        fmt="o-", color=color, markersize=5.5, capsize=3.0, linewidth=1.9,
+                        label=label)
         ax.set_title(f"Heston CVaR at {quantile} percent confidence")
         ax.set_xlabel("Proportional transaction cost (percent)")
         ax.set_ylabel("CVaR of terminal PnL, loss basis")
         _style(ax)
     axes[0].legend(frameon=False, fontsize=9.0, loc="upper left")
+    fig.suptitle("Heston cost sensitivity: 5 seed mean with one standard deviation",
+                 fontsize=11.5, color=TEXT_COLOR)
     fig.tight_layout()
     return _save(fig, path)
 
@@ -1018,7 +1088,7 @@ def plot_heston_fig2(
             label=f"model worst half, CVaR {model_cvar:.3f}")
     ax.set_xlabel("Hedging error, worst half of the loss distribution")
     ax.set_ylabel("Density within the tail")
-    ax.set_title("Deep hedge concentrates mass, model hedge keeps a fat left tail")
+    ax.set_title("Worst half of the loss distribution")
     ax.legend(frameon=False, fontsize=8.6)
     _style(ax)
     fig.suptitle("Heston, no transaction costs, stock and variance swap", fontsize=11.5,
@@ -1543,13 +1613,18 @@ def plot_eda_results(payload: Mapping[str, object], results_path: str | Path) ->
     # The gap to Leland against the noise floor of the same metric
     deep = metrics["Deep Hedging"]
     base = metrics["Leland"]
+    paired = studies["multiseed"].get("paired_vs_leland", {})
     labels = []
     ratios = []
     for key, label in fields:
         gap = abs(float(base[key]["mean"]) - float(deep[key]["mean"]))
         se = float(deep[key].get("se", 0.0))
         labels.append(label)
-        ratios.append(gap / se if se > 0.0 else 0.0)
+        # Paired per-seed t when available, since that is the quoted statistic
+        if key in paired and paired[key].get("t"):
+            ratios.append(abs(float(paired[key]["t"])))
+        else:
+            ratios.append(gap / se if se > 0.0 else 0.0)
     bars = ax.bar(np.arange(len(labels)), ratios, 0.6, color=COLORS["Deep Hedging"], alpha=0.9)
     for bar, ratio in zip(bars, ratios):
         ax.annotate(f"{ratio:.1f}", (bar.get_x() + bar.get_width() / 2.0, ratio),

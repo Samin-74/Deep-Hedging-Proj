@@ -26,6 +26,7 @@ Thumbs.db
 *.log
 *.err
 raw_*.json
+_raw_*.json
 _scratch/
 
 # Local reference material, not redistributed

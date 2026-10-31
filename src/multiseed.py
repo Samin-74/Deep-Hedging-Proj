@@ -79,6 +79,8 @@ def run_single_seed(
         "Black-Scholes": strategy_metrics(bs["pnl"], bs["costs"], config.lambda_entropic),
         "Leland": strategy_metrics(leland["pnl"], leland["costs"], config.lambda_entropic),
     }
+    # Training history is kept so the convergence claims can be checked from the JSON
+    result["Deep Hedging"]["history"] = [float(v) for v in history]
     if verbose:
         print(
             f"  seed {seed}: deep entropic {result['Deep Hedging']['entropic']:7.4f}  "

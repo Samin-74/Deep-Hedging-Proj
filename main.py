@@ -1,4 +1,5 @@
 import argparse
+import json
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -38,6 +39,8 @@ def seed_everything(seed: int, deterministic: bool = False) -> None:
     # Single entry point for reproducible runs
     torch.manual_seed(seed)
     np.random.seed(seed)
+    # Thread count changes floating point reduction order, so it must be pinned
+    torch.set_num_threads(1)
     if deterministic:
         torch.use_deterministic_algorithms(True, warn_only=True)
 
@@ -639,6 +642,49 @@ def main() -> int:
     print("Saved figures")
     for artifact in artifacts:
         print(f"  {artifact}")
+    # Persist the console numbers so every quoted value is checkable from disk
+    canonical = {
+        "config": {
+            "simulator": config.simulator,
+            "loss_type": config.loss_type,
+            "cost_rate": config.cost_rate,
+            "n_paths": config.n_paths,
+            "n_eval_paths": config.n_eval_paths,
+            "epochs": config.epochs,
+            "seed": config.seed,
+            "norm_type": config.norm_type,
+            "time_dependent": config.time_dependent,
+        },
+        "summaries": {name: {k: float(v) for k, v in block.items()} for name, block in summaries.items()},
+        "cost_drag": [
+            {"strategy": name, "mean_cost": float(cost), "gross_pnl": float(gross), "net_pnl": float(net)}
+            for name, cost, gross, net in cost_drag(costs, pnls, config.cvar_alpha)
+        ],
+        "turnover": {name: float(paths.abs().sum(dim=1).mean()) for name, paths in delta_paths.items()},        "tail_cost_share": {
+            name: float(tail_attribution(pnls[name], costs[name], config.cvar_alpha)["tail_cost_share"])
+            for name in STRATEGIES
+        },
+        "risk_measures": {
+            name: {
+                "entropic": float(EntropicRiskLoss(config.lambda_entropic)(pnls[name])),
+                "cvar_95": float(empirical_cvar(pnls[name], 0.95)),
+                "cvar_99": float(empirical_cvar(pnls[name], 0.99)),
+            }
+            for name in STRATEGIES
+        },
+        "scenario": {
+            "step": int(scenario["step"]),
+            "prev_delta": float(scenario["prev_delta"]),
+            "spots": [float(v) for v in scenario["spots"]],
+            "policy": [float(v) for v in scenario["policy"]],
+            "bs": [float(v) for v in scenario["bs"]],
+            "leland": [float(v) for v in scenario["leland"]],
+        },
+        "training_history": [float(v) for v in history],
+        "n_params": int(model.count_parameters()),
+    }
+    (results / "canonical_run.json").write_text(json.dumps(canonical, indent=2), encoding="utf-8")
+    print(f"  {results / 'canonical_run.json'}")
     print(f"total runtime {time.perf_counter() - started:.2f}s")
     return 0
 
