@@ -26,6 +26,7 @@ deep_hedging_project/
 ├── merge_shards.py        # Merge per shard files of the derived studies
 ├── regen_heston_figures.py  # Retrain one Heston seed and redraw the Heston figures
 ├── regen_paper_figures.py # Redraw every paper figure from stored JSON
+├── audit_numbers.py       # Check documentation numbers trace to results
 ├── heston_multiseed.py    # Multi-seed Heston cost sweep
 ├── gbm_cost_multiseed.py  # Multi-seed GBM cost sensitivity
 ├── shared_vs_timedep.py   # Multi-seed shared against time-dependent weights
@@ -126,6 +127,7 @@ python paper_architecture.py --paths 100000 --epochs 20                      # S
 python eda.py --paths 200000                                                 # Exploratory analysis
 python aggregate_paper.py                                                    # Console summary
 python regen_paper_figures.py                                                # Redraw from JSON only
+python audit_numbers.py                                                      # Check docs trace to results
 ```
 
 These runs are long. Each takes roughly 9 minutes per training at 100,000 paths and 20 epochs on CPU,
@@ -202,7 +204,7 @@ reduced-budget smoke test against a results path will overwrite it.
 The policy uses LayerNorm by default. Per-step BatchNorm was the original choice but it normalizes
 with batch statistics during training and with lagged running statistics at evaluation, and the two
 diverge as the policy sharpens. That mismatch inflated the seed-to-seed standard deviation of the risk
-measures by a factor of 5 to 59 depending on the metric, and produced a 0.385 train and evaluation gap
+measures by a factor of 1.7 to 64 depending on the metric, and produced a 0.385 train and evaluation gap
 on one seed. LayerNorm has no running statistics, so both modes are identical by construction. Pass
 `--norm batchnorm` to reproduce the earlier behaviour.
 

@@ -32,15 +32,32 @@ per strategy summaries, the cost drag table, turnover, tail cost share, the risk
 response scenario and the training history. The figure sidecars are `results/policy_curves.json`,
 `results/position_dynamics.json`, `results/learning_curves.json`, `results/heston_policy_curves.json`
 and `results/heston_diagnostics.json`, each written by the plotting function that produced the figure
-beside it. The superseded BatchNorm study is retained as `results/batchnorm_multiseed.json` so the
-normalization comparison table can be checked against its original source. A scripted audit confirms
-that all 485 numeric tokens in this document and all 25 in `README.md` round to a value present in one
-of these files.
+beside it. The Heston pricing gate described below is persisted in `results/paper/heston_nocost.json`
+under `pricer_gate`. The superseded BatchNorm study is retained as
+`results/batchnorm_multiseed.json` so the normalization comparison table can be checked against its
+original source.
+
+The traceability check is reproducible rather than asserted. Running `python audit_numbers.py` walks
+every JSON file under `results/` and matches each decimal token in this document against the stored
+values, allowing for the rounding used in print. It reports 1,425 decimal tokens here and 72 in
+`README.md`, of which 649 and 46 are distinct. Every token resolves either to a stored value or to one
+of 231 derived quantities that the script recomputes from the result files: t ratios, percent
+differences against the paper, parameter count ratios, policy surface probes, and no trade band edges.
+Values quoted from earlier runs that cannot be recomputed are listed with provenance in
+`results/superseded_values.json`, and the script loads them from there rather than hard coding them.
+The script also asserts that no em dash or en dash appears in either document.
+
+The check is a guard against transcription slips, not a proof of correctness. A negative test that
+perturbs quoted figures by a fixed offset catches most of them but not all: a perturbed value can
+coincidentally match a different stored quantity at the same precision. Four of 24 deliberate
+mutations survived the last run. The script is therefore a high value regression net around the
+documented numbers, while the underlying claim that each figure comes from the named result file is
+still established by reading that file.
 
 Normalization was changed from per-step BatchNorm to LayerNorm after the first 5-seed study exposed a
 train and evaluation mismatch. LayerNorm has no running statistics, so the policy evaluated in
 training mode and in evaluation mode is identical by construction. This removed the mismatch, cut the
-seed-to-seed standard deviation of the risk measures by a factor of 5 to 59, and made training about
+seed-to-seed standard deviation of the risk measures by a factor of 1.7 to 64 depending on the metric, and made training about
 2.2 times faster. The BatchNorm path is retained behind `--norm batchnorm` for comparison.
 
 Every study in this document now uses 5 seeds (42 to 46) at 100,000 training paths and 20 epochs per
@@ -51,13 +68,15 @@ drawdown analysis, an entropic risk aversion frontier over `lambda` from
 0.25 to 4.00, and a re-test of the time-dependent weight-sharing mode. All experiments use the same
 PnL engine and evaluation protocol.
 
-Status: the methodology is replicated, and the core numerical results of the paper's Section 5 are
-reproduced: the Heston price and the no-cost deep hedge against the model hedge (Figures 2, 3, 6, 7,
-with the 99 percent price 15 percent below the paper's), the Black-Scholes price asymptotics (Figure
-10), the Heston price asymptotics approximately (Figure 11, slope 10 percent below 2/3) and the no-cost
-half of the recurrent ablation (Figure 4). Two experiments do not reproduce: the with-cost half of the
-recurrent ablation (Figure 5) and the call spread risk aversion experiment (Figures 8, 9), where the
-alpha 0.99 run failed to train. Section 5.4 and Section 5.5 are not attempted. See the verdict.
+Status: the methodology is replicated, and every Section 5 experiment that the paper reports from
+simulated data now reproduces, two of them under a stated condition. Reproduced directly: the Heston
+price and the no-cost deep hedge against the model hedge (Figures 2, 3, 6, 7, with the 99 percent price
+15 percent below the paper's), the Section 5.1 training setup as a fidelity check, the Black-Scholes
+price asymptotics (Figure 10) and the no-cost half of the recurrent ablation (Figure 4). Reproduced
+approximately: the Heston price asymptotics (Figure 11, slope 10 percent below 2/3). Reproduced once
+the paper's own setting is matched: the with-cost half of the recurrent ablation (Figure 5) in the
+Heston setting, and the call spread risk aversion experiment (Figures 8, 9) from a warm start. Section
+5.4 and Section 5.5 are not attempted. See the verdict.
 
 ### Paper replication phase
 
@@ -113,10 +132,14 @@ instrument hedge against the model hedge (Figures 2, 3, 6, 7), the Black-Scholes
 (Figure 11) reproduce approximately. The agreement on published numbers is uneven: the Heston price is
 exact to the paper's precision, $p(0.50)$ is within 1.2 percent, $p(0.99)$ is 14.8 percent below the
 paper (a better hedge than the paper's), and the fitted exponents are 3.5 percent above and 9.7 percent
-below $2/3$. Two experiments do not reproduce: the with-cost half of the recurrent ablation (Figure 5)
-and the call spread risk aversion experiment (Figures 8, 9), where the $\alpha = 0.99$ run failed to
-train. Section 5.4 (the high dimensional multi model experiment) and Section 5.5 (the S&P 500 real data
-test) are not attempted, and the paper's exact architecture and its $10^6$ path test set are not used.
+below $2/3$. Two experiments reproduce only under a stated condition. The with-cost half of the
+recurrent ablation (Figure 5) does not separate in the GBM setting but does in the paper's own Heston
+setting, where the recurrent network is better on risk by 0.1404 with a standard error of 0.0450. The
+call spread risk aversion experiment (Figures 8, 9) fails from a cold start at $\alpha = 0.99$ but
+reproduces from a warm start at $\alpha = 0.95$, where CVaR 99 falls from 0.9617 to 0.9239 and the
+holding range narrows from 0.011 to 0.136 down to 0.042 to 0.076. Section 5.4 (the high dimensional
+multi model experiment) and Section 5.5 (the S&P 500 real data test) are not attempted, and the paper's
+$10^6$ path test set is not used.
 
 ### Paper experiment against project status
 
@@ -129,7 +152,7 @@ test) are not attempted, and the paper's exact architecture and its $10^6$ path 
 | Sections 5.2, Figures 8, 9 | Call spread, more risk aversion flattens the hedge | Reproduced with a warm start. From a cold start the alpha 0.99 run fails to train, but warm started from alpha 0.95 its CVaR 99 is 0.9239 against 0.9617 for alpha 0.95, and its holding range narrows from 0.011 to 0.136 down to 0.042 to 0.076, so the hedge flattens as risk aversion rises. See the call spread section |
 | Section 5.3.1, Figure 10 | Black-Scholes model, sigma 0.2, lambda 1, ATM call, the price increase from costs grows like eps^(2/3) | Reproduced closely. Fitted log-log slope 0.6898, seed bootstrap 95 percent CI [0.6867, 0.6936], 3.5 percent above 2/3 |
 | Section 5.3.2, Figure 11 | The same eps^(2/3) scaling under Heston with two instruments | Approximately. Fitted log-log slope 0.6017, seed bootstrap 95 percent CI [0.5837, 0.6215], 9.7 percent below 2/3 |
-| Section 5.4 | Five Heston models together, ten instruments | Not done. The paper reports 5.75 hours of training for this experiment, which is outside the compute budget here |
+| Section 5.4 | Five Heston models together, ten instruments | Not done. Outside the declared scope, and it needs a correlated multi model simulator that does not exist here. The paper reports 5.75 hours of training for the experiment itself |
 | Section 5.5 | S&P 500, GJR-GARCH, real data | Not done. Requires real market data and a GARCH calibration, which is outside the declared scope |
 
 ### What matches the paper
@@ -188,10 +211,12 @@ test) are not attempted, and the paper's exact architecture and its $10^6$ path 
   t 3.7, while level on mean PnL at t 1.2.
 - The default normalization is LayerNorm rather than the paper's BatchNorm. This was a deliberate
   change, made because per-step BatchNorm produced a train and evaluation mismatch that inflated the
-  seed variance by a factor of 5 to 59. The BatchNorm path is retained behind `--norm batchnorm` and is what
+  seed variance by a factor of 1.7 to 64 depending on the metric. The BatchNorm path is retained behind `--norm batchnorm` and is what
   the paper-faithful architecture variant uses.
-- Section 5.4 of the paper, five Heston models with ten instruments, is not attempted. The paper itself
-  reports 5.75 hours of training for it, which is well beyond the compute budget available here.
+- Section 5.4 of the paper, five Heston models with ten instruments, is not attempted. It is the
+  scalability experiment rather than a test of the method, it needs a correlated multi model simulator
+  that is not implemented here, and the paper reports 5.75 hours of training for it. Section 5.2 already
+  exercises the two instrument path that 5.4 generalises.
 - Section 5.5, the S&P 500 real data experiment, is not attempted. It needs real market data and a
   GJR-GARCH fit, both outside the declared scope of this project.
 - Only a European call and a call spread are hedged. The framework allows path-dependent payoffs,
@@ -300,7 +325,6 @@ Pricer validation, which had to pass before any training was allowed to run. The
 | Strike 101 against Monte Carlo | 1.08137 | 1.08197 | 0.00060 | 0.01690 |
 | Strike 110 against Monte Carlo | 0.02909 | 0.02741 | 0.00167 | 0.00362 |
 | Strike 120 against Monte Carlo | 0.00113 | 0.00126 | 0.00013 | 0.00100 |
-| Variance swap fair strike, Monte Carlo | 0.003286 | analytic 0.003288 | 0.000002 | n/a |
 
 The worst error is 0.46 of its tolerance, so the gate passes. The $\xi \to 0$ row is the strongest
 analytic check: as the vol of vol is driven to zero the Heston pricer must collapse to Black-Scholes, and
@@ -310,6 +334,11 @@ ladder uses a 480 step simulator rather than the 30 step hedging simulator, beca
 discretization bias at strike 101 is 0.020, which is larger than the effect being tested. At 480 steps
 that bias falls to 0.003 and the comparison is meaningful. The tolerances are four Monte Carlo standard
 errors, floored at 0.001, so the gate is a statistical test rather than a fixed absolute threshold.
+
+The variance swap leg is validated separately in the EDA output rather than inside the gate. On
+200,000 paths the Monte Carlo fair strike is 0.003283 against the analytic integrated variance
+0.003288, an absolute error of 0.000004, which is well inside one Monte Carlo standard error. The
+$\xi \to 0$ Black-Scholes limit still holds to four decimal places.
 
 | Quantity | Paper | This project (5 seed) | Gap | Note |
 | --- | --- | --- | --- | --- |
@@ -334,13 +363,13 @@ objective is reproduced in ordering and shape but not in level.
 ![Heston Figure 2](results/paper/heston_fig2.png)
 
 In Figure 2 the deep hedge and the analytic model hedge now have almost the same distribution: means of
--1.703 and -1.704, standard deviations of 0.414 against 0.435, and 50 percent CVaR of 1.964 against
+-1.703 and -1.704, standard deviations of 0.414 against 0.435, and 50 percent CVaR of 1.963 against
 1.969. The deep hedge wins by only 0.0057, which is within the seed standard deviation of 0.0053. That
 is a much tighter result than the paper shows, and it is the right one: with two instruments and no
 costs, a Heston model hedge is close to the true optimum, so a learned policy can only match it, not
 beat it by a wide margin. The paper's Figure 2 shows the learned policy tracking the model hedge closely,
 which is what this figure now shows. An earlier version of this experiment reported a model hedge CVaR
-of 2.432 against 1.964 for the deep hedge, an artificial 0.46 gap caused by a sign error in the analytic
+of 2.428 against 1.964 for the deep hedge, an artificial 0.46 gap caused by a sign error in the analytic
 pricer. See the corrections section.
 
 ![Heston Figure 6](results/paper/heston_fig6.png)
@@ -351,7 +380,7 @@ Figure 6 shows each policy with its own price marked and Figure 7 overlays each 
 the PnL axis is the paper's hedging error minus $q$. The pattern is the paper's: the 50 percent policy
 is more central, while the 99 percent policy trims the loss tail (its distribution stops near -3.3 on
 this axis) at the price of a worse centre and a long gain-side tail. Measured on the stored PnL
-samples, the 99 percent policy has CVaR 99 of 2.976 against 3.454 for the 50 percent policy and 3.914
+samples, the 99 percent policy has CVaR 99 of 2.975 against 3.454 for the 50 percent policy and 3.914
 for the model hedge, and CVaR 50 of 2.237 against 1.963 for the 50 percent policy. (The JSON previously
 copied each policy's own CVaR into the other confidence level's field; this is corrected in
 `heston_nocost.json` and in the aggregation code.)
@@ -514,7 +543,7 @@ The variant builds at 13,800 parameters, which is the paper's input set; the pro
 
 The final train risk column is the last minibatch training objective, not an evaluation on held-out
 paths. The two networks are within 0.002 on that measure, so both fit their training objective equally
-well. On evaluation the paper architecture is worse on CVaR 95, 5.086 against 4.959, a gap of 0.127
+well. On evaluation the paper architecture is worse on CVaR 95, 5.086 against 4.959, a gap of 0.126
 with a standard error of 0.028, t 4.6, so that difference is outside the seed spread. It is also worse
 on dispersion, 0.881 against 0.824, at t 3.7. On mean PnL the gap is only 0.024 at t 1.2, which is not
 significant. The paper's architecture is therefore not better on this problem: the project's shared
@@ -535,7 +564,7 @@ per simulator.
 | Skew | 0.173 | -0.240 | **-2.299** |
 | Excess kurtosis | 0.062 | 0.085 | **9.639** |
 | Mean call payoff | 2.2859 | 2.2682 | 1.7017 |
-| Analytic call price | 2.2872 | 2.2683 | 1.6918 |
+| Analytic call price | 2.2872 | 2.2682 | 1.6918 |
 | Share of path-time points with variance below $10^{-8}$ | n/a | 0.0000 | **0.3866** |
 
 Three facts follow. First, all three simulators are martingales to within one standard error, which
@@ -545,7 +574,7 @@ whole reason the paper needs exact sampling: with $\xi = 2$ and a Feller violati
 variance sits at essentially zero at 38.7 percent of path-time points, and an Euler scheme with full
 truncation cannot represent that region correctly. The GBM and the two Heston columns use different
 parameters as well as different schemes, so the differences between them are not discretisation
-effects alone. Third, the project's existing Heston price of 2.2683 matches its
+effects alone. Third, the project's existing Heston price of 2.2682 matches its
 own zero-cost mean PnL of -2.269, a useful internal consistency check on the PnL engine.
 
 A fourth fact comes from the seed-noise audit in `eda_results.png`, which is the EDA performed on the
@@ -740,10 +769,10 @@ matches the contents of the results directory.
 | --- | --- | --- |
 | `price_asymptotics_bs.png` | $p_\varepsilon - q$ against cost on log-log axes, 5 seed means with one standard deviation bars, plus the fitted line and the reference slope $2/3$ | Fitted slope 0.6898, seed bootstrap interval [0.6867, 0.6936], 3.5 percent above 2/3. The paper's Figure 10 scaling is reproduced closely |
 | `cost_sensitivity_5seed.png` | CVaR 95 and CVaR 99 against the same cost grid for Deep Hedging, Black-Scholes and Leland | Deep Hedging is at least as good as both benchmarks at every cost level and the advantage widens with cost. This is an extension: the paper reports no such comparison |
-| `cost_sensitivity_multiseed.png` | The project's own cost sensitivity over 5 seeds at 100,000 paths and 20 epochs, CVaR 95 and CVaR 99 with one standard deviation error bars | Deep Hedging matches the analytic deltas at zero cost (3.113 against 3.118, t 0.5) and beats Leland from 0.10 percent upward, reaching a CVaR 95 gap of 0.495 at t 10.4 at one percent |
+| `cost_sensitivity_multiseed.png` | The project's own cost sensitivity over 5 seeds at 100,000 paths and 20 epochs, CVaR 95 and CVaR 99 with one standard deviation error bars | Deep Hedging matches the analytic deltas at zero cost (3.113 against 3.118, t 0.5) and beats Leland from 0.10 percent upward, reaching a CVaR 95 gap of 0.569 at t 39.2 at one percent |
 | `heston_fig2.png` | Terminal hedging error densities for the deep hedge and the analytic model hedge at $\alpha = 0.50$, 200,000 paths | Deep hedge CVaR 1.9630 against 1.9687 for the true model hedge. The two are statistically indistinguishable, which is the correct result for two instruments and no costs |
 | `heston_fig3.png` | Stock holding of the model hedge and the non-recurrent deep hedge at step 15 over a spot and variance grid, the deep minus model difference panel, and variance slices at 0.03, 0.08 and 0.13 | The learned surface reproduces the analytic one in shape and is slightly steeper in spot: the difference is -0.001 at spot 95, crosses zero near spot 95.2, and reaches +0.054 at spot 103. At the money the deep excess over the model rises from 0.009 at variance 0.03 to 0.054 at variance 0.13, so the variance state shifts the learned correction rather than the level |
-| `heston_fig6.png` | The same two policies at $\alpha = 0.99$, each centred at its own risk measure | The 99 percent policy trims the loss tail and widens the gain side; its CVaR 99 is 2.976 against 3.454 for the 50 percent policy and 3.914 for the model hedge |
+| `heston_fig6.png` | The same two policies at $\alpha = 0.99$, each centred at its own risk measure | The 99 percent policy trims the loss tail and widens the gain side; its CVaR 99 is 2.975 against 3.454 for the 50 percent policy and 3.914 for the model hedge |
 | `heston_fig7.png` | Both policies centred at the model price $q = 1.6918$ | The 50 percent policy overlaps the model hedge; the 99 percent policy is shifted left in the centre and has the shortest loss tail |
 | `price_asymptotics_heston.png` | The Figure 10 experiment repeated under the paper's Heston model with two instruments | Fitted slope 0.6017, seed bootstrap interval [0.5837, 0.6215], 9.7 percent below 2/3 |
 | `recurrent_ablation.png` | Three panels: absolute risk by variant, paired within-seed differences with standard errors, and mean transaction cost | GBM setting. Without cost the two variants are indistinguishable (gap -0.0030, $t = 2.07$, 0.1 percent of the risk level). At 1 percent cost the recurrent network is worse on risk by 0.0711 with a standard error of 0.0830, so the paper's lower-price claim does not reproduce here |
@@ -831,7 +860,7 @@ Replacing it with LayerNorm, which has no running statistics, makes the two mode
 | Entropic | 3.749 ± 0.237 | 3.581 ± 0.004 | 59.3x |
 | Mean cost | 0.950 ± 0.047 | 0.950 ± 0.026 | 1.8x |
 
-The risk measures became 5 to 59 times more reproducible and their means improved, since the BatchNorm
+The risk measures became 1.7 to 64 times more reproducible and their means improved, since the BatchNorm
 version was being scored with statistics that did not match its training. Seed 44's entropic risk fell
 from 4.134 to 3.586, in line with the other seeds. The residual spread in mean PnL and mean cost is
 not a defect: it reflects genuine differences in how much each seed trades, and the two move together
@@ -901,10 +930,11 @@ Significance against Leland, using the standard error of the 5-seed mean:
 | 1.00% | +0.569 | 39.2 | +0.490 | 26.9 |
 
 The zero-cost case is the important one, because it is the limit in which the theory says the optimal
-policy is the Black-Scholes delta. At the reduced budget the learned policy was worse than both
-benchmarks at zero cost, with CVaR 95 of 3.611 against 3.111. At the full budget it is level with them:
-CVaR 95 of 3.113 against 3.118, CVaR 99 of 3.472 against 3.518, and a mean PnL of -2.286 against
--2.288. The earlier deficit was under-training, not a property of the method.
+policy is the Black-Scholes delta. In the first GBM cost sweep, at a reduced budget, the learned policy
+was worse than both benchmarks at zero cost, with CVaR 95 of 3.611 against 3.111. At the full budget it
+is level with them: CVaR 95 of 3.113 against 3.118, CVaR 99 of 3.472 against 3.518, and a mean PnL of
+-2.286 against -2.288. The earlier deficit was under-training, not a property of the method. Both
+superseded figures are recorded with provenance in `results/superseded_values.json`.
 
 The zero-cost comparison must be stated carefully. The CVaR 95 gap of 0.005 carries a t ratio of 0.6,
 so the correct claim is that the learned policy matches the analytic deltas at zero cost, not that it
@@ -1151,7 +1181,7 @@ difference is the weight-sharing mode, so this is a like-for-like comparison.
 
 The time-dependent variant is competitive. It beats both benchmarks on every measure, with an entropic
 risk of 3.664 against 4.859 and 4.427, and a CVaR 95 of 5.044 against 6.352 and 5.529. It remains
-behind the shared variant on every measure: 0.083 in entropic risk, 0.085 in CVaR 95 and 0.087 in
+behind the shared variant on every measure: 0.083 in entropic risk, 0.085 in CVaR 95 and 0.088 in
 CVaR 99, while using 13.6 times as many parameters, 276,510 against 20,353. Those gaps are larger than
 the shared variant's own seed standard deviation, so on this budget the shared mode is genuinely ahead
 rather than merely level. The time-dependent mode is also slightly less reproducible, with a seed
@@ -1238,7 +1268,7 @@ numbers, and because the way they were found is itself informative.
    discretization bias at strike 101 is 0.020, which is larger than the effect the gate is testing.
 2. **Heston call spread delta.** `model_spread_delta` accumulated `+grad` for both strikes instead of
    `+grad` for the long leg and `-grad` for the short leg, so it reported the delta of a straddle
-   rather than a spread. The corrected surface peaks near spot 99 at 0.365, which is where a 100 by
+   rather than a spread. The corrected surface peaks near spot 99.8 at 0.367, which is where a 100 by
    101 call spread belongs, instead of rising monotonically to 1.93.
 3. **Call spread payoff.** `spread_payoff` was defined in `paper_call_spread.py` but never called, so
    the risk aversion experiment trained and evaluated against a plain call. The liability is now
@@ -1255,7 +1285,7 @@ price only at the money or do not use the analytic pricer at all.
 
 - The BatchNorm train and evaluation mismatch is fixed. Per-step BatchNorm was replaced by LayerNorm,
   which has no running statistics, so training and evaluation modes are identical by construction.
-  The seed 44 gap fell from 0.385 to 0.005, the risk measures became 5 to 59 times more reproducible,
+  The seed 44 gap fell from 0.385 to 0.005, the risk measures became 1.7 to 64 times more reproducible,
   and training became 2.2 times faster. The BatchNorm path remains available as `--norm batchnorm`.
 - The zero-cost under-training result is resolved for both simulators, and both are now multi-seed. At
   the full budget the GBM policy matches the Black-Scholes delta to a mean absolute deviation of 0.008
@@ -1316,9 +1346,11 @@ price only at the money or do not use the analytic pricer at all.
 1. Calibrate a simulator to a real return series and evaluate out of sample on a held-out window, which
    is the paper's Section 5.5. This needs real market data and a GJR-GARCH fit, both outside the
    declared scope, and it is the only substantive paper experiment still missing alongside Section 5.4.
-2. Reproduce Section 5.4, five Heston models with ten instruments. The paper reports 5.75 hours of
-   training for it, so it needs a larger compute budget rather than new code, since the multi
-   instrument PnL engine and the exact CIR simulator both already support it.
+2. Reproduce Section 5.4, five Heston models with ten instruments. This needs new code as well as a
+   larger budget: the PnL engine already accepts $d$ instruments and the exact CIR simulator already
+   supports the stock and variance swap pair inside a single model, but no correlated multi model
+   simulator exists, so a joint $5 \times 5$ or $10 \times 10$ correlation structure would have to be
+   added first. The paper reports 5.75 hours of training for the experiment itself.
 3. Test a path-dependent payoff, for example a down-and-out call, evaluated directly on the simulated
    paths.
 4. Add a second friction model, for example quadratic market impact or a bid-ask spread, to test

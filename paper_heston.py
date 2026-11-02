@@ -255,6 +255,7 @@ def main() -> int:
 
     records: dict[str, object] = {
         "q": q,
+        "pricer_gate": gate,
         "paper": {"q": PAPER_Q, "cvar_0.50": PAPER_CVAR_50, "cvar_0.99": PAPER_CVAR_99},
         "alphas": list(args.alphas),
         "seeds": list(args.seeds),

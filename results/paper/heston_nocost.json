@@ -600125,5 +600125,66 @@
     ],
     "aggregated": true,
     "commit": "uncommitted"
+  },
+  "pricer_gate": {
+    "checks": [
+      {
+        "name": "at the money",
+        "analytic": 1.6918339338993178,
+        "reference": 1.6918,
+        "abs_error": 3.393389931782842e-05,
+        "tolerance": 0.001
+      },
+      {
+        "name": "xi to 0 limit",
+        "analytic": 2.2874879022697456,
+        "reference": 2.2871506280449694,
+        "abs_error": 0.0003372742247762517,
+        "tolerance": 0.001
+      },
+      {
+        "name": "strike 95",
+        "analytic": 5.7803042442424015,
+        "reference": 5.776052274871645,
+        "abs_error": 0.004251969370756115,
+        "mc_se": 0.007305806171032281,
+        "tolerance": 0.029223224684129124
+      },
+      {
+        "name": "strike 100",
+        "analytic": 1.6918339338993178,
+        "reference": 1.6913481732503526,
+        "abs_error": 0.00048576064896521665,
+        "mc_se": 0.004811358652468521,
+        "tolerance": 0.019245434609874084
+      },
+      {
+        "name": "strike 101",
+        "analytic": 1.0813714536608643,
+        "reference": 1.0819680818458914,
+        "abs_error": 0.0005966281850271482,
+        "mc_se": 0.004225787860670243,
+        "tolerance": 0.016903151442680973
+      },
+      {
+        "name": "strike 110",
+        "analytic": 0.029086877022621138,
+        "reference": 0.027413324458990602,
+        "abs_error": 0.0016735525636305364,
+        "mc_se": 0.0009057613590999916,
+        "tolerance": 0.0036230454363999666
+      },
+      {
+        "name": "strike 120",
+        "analytic": 0.0011294389902190005,
+        "reference": 0.001260860319662046,
+        "abs_error": 0.00013142132944304538,
+        "mc_se": 0.0002025444831102391,
+        "tolerance": 0.001
+      }
+    ],
+    "worst_abs_error": 0.004251969370756115,
+    "worst_ratio": 0.4619187346691018,
+    "passed": true
   }
 }

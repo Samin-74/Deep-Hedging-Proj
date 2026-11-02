@@ -1,0 +1,60 @@
+{
+  "note": "Values quoted in the documents that come from earlier runs and cannot be recomputed from the current result files. Each entry names where it came from so the document stays auditable.",
+  "values": [
+    {
+      "value": 2.427905,
+      "metric": "Heston model hedge CVaR 0.50 before the pricer phase fix",
+      "source": "commit fdb20da9, results/paper/heston_nocost.json"
+    },
+    {
+      "value": 4.870811,
+      "metric": "Heston model hedge CVaR 0.99 before the pricer phase fix",
+      "source": "commit fdb20da9, results/paper/heston_nocost.json"
+    },
+    {
+      "value": 3.112699,
+      "metric": "Deep hedge CVaR 95 at 0.00 percent cost in the earlier GBM cost sweep",
+      "source": "commit 632cdf24, results/gbm_cost_multiseed.json"
+    },
+    {
+      "value": 3.117914,
+      "metric": "Black-Scholes CVaR 95 at 0.00 percent cost in the earlier GBM cost sweep",
+      "source": "commit 632cdf24, results/gbm_cost_multiseed.json"
+    },
+    {
+      "value": 3.611,
+      "metric": "Deep hedge CVaR 95 at 0.00 percent cost quoted for the reduced budget study",
+      "source": "commit b66b0c7, PRELIMINARY_ANALYSIS.md, before the full budget GBM cost sweep"
+    },
+    {
+      "value": 6.445,
+      "metric": "Time-dependent BatchNorm entropic risk at zero cost",
+      "source": "commit b66b0c7, PRELIMINARY_ANALYSIS.md, before the LayerNorm change"
+    },
+    {
+      "value": 4.121,
+      "metric": "Black-Scholes entropic risk in the same BatchNorm comparison",
+      "source": "commit b66b0c7, PRELIMINARY_ANALYSIS.md, before the LayerNorm change"
+    },
+    {
+      "value": 3.111,
+      "metric": "Black-Scholes CVaR 95 at 0.00 percent cost quoted for the reduced budget GBM study",
+      "source": "commit b66b0c7, PRELIMINARY_ANALYSIS.md, before the full budget cost sweep"
+    },
+    {
+      "value": 0.2579,
+      "metric": "Heston call spread model price before the sign fix",
+      "source": "commit fdb20da9, results/paper/call_spread.json, before the spread delta and payoff fixes"
+    },
+    {
+      "value": 1.964,
+      "metric": "Deep hedge CVaR 0.50 in the run that preceded the two instrument pricer phase fix",
+      "source": "commit fdb20da9, results/paper/heston_nocost.json"
+    },
+    {
+      "value": 0.385,
+      "metric": "Seed 44 BatchNorm train against evaluation CVaR gap before the LayerNorm change",
+      "source": "commit b66b0c7, PRELIMINARY_ANALYSIS.md, before the LayerNorm change"
+    }
+  ]
+}
