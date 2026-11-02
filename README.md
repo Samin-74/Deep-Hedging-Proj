@@ -119,7 +119,9 @@ python price_asymptotics.py --paths 100000 --eval-paths 100000 --epochs 20   # F
 python paper_heston_asymptotics.py --paths 100000 --epochs 20               # Figure 11
 python paper_heston.py --paths 100000 --eval-paths 200000 --epochs 20        # Figures 2, 3, 6, 7
 python recurrent_ablation.py --paths 100000 --epochs 20                      # Figures 4, 5
+python recurrent_ablation.py --paths 100000 --epochs 20 --setting paper_heston  # Figure 5 in Heston
 python paper_call_spread.py --paths 100000 --epochs 20                       # Figures 8, 9
+python paper_call_spread.py --paths 100000 --epochs 20 --simple --warm-start  # Figures 8, 9 warm started
 python paper_architecture.py --paths 100000 --epochs 20                      # Section 5.1
 python eda.py --paths 200000                                                 # Exploratory analysis
 python aggregate_paper.py                                                    # Console summary
@@ -142,16 +144,18 @@ retraining. `regen_paper_figures.py` redraws every figure from the stored JSON a
 | `heston_fig6.png` | Figure 6, alpha 0.5 against alpha 0.99, each centred at its own risk measure |
 | `heston_fig7.png` | Figure 7, both centred at the model price |
 | `price_asymptotics_heston.png` | Figure 11, Heston price asymptotics. Fitted slope 0.6017, CI [0.5837, 0.6215], 9.7 percent below 2/3 |
-| `recurrent_ablation.png` | Figures 4 and 5, recurrent against simple network. Figure 4 reproduces; Figure 5 does not (a tie under costs) |
-| `call_spread.png` | Figures 8 and 9, call spread and risk aversion. The alpha 0.99 run failed to train (the alpha 0.95 policy beats it on its own objective), so this experiment does not reproduce |
-| `paper_architecture.png` | Project default against a paper-sized per-step network. The run used the project inputs and LeakyReLU because of a configuration bug, now fixed |
+| `recurrent_ablation.png` | Figures 4 and 5, recurrent against simple network in the GBM setting. Figure 4 reproduces; Figure 5 does not here (a tie under costs) |
+| `recurrent_ablation_heston.png` | Figure 5 in the paper's own Heston setting. It reproduces: the recurrent network is better on risk at $t = 3.12$ and cheaper |
+| `call_spread.png` | Figures 8 and 9 from a cold start. The alpha 0.99 run failed to train (the alpha 0.95 policy beats it on its own objective) |
+| `call_spread_warmstart.png` | Figures 8 and 9 with a warm start from alpha 0.95. They reproduce: the alpha 0.99 CVaR 99 of 0.9239 beats alpha 0.95's 0.9617 and the holding range narrows |
+| `paper_architecture.png` | Project default against the paper's own architecture, now with its inputs, ReLU and 13,800 parameters. The paper architecture is worse on CVaR 95 at $t = 4.6$ |
 | `eda_market.png`, `eda_moments.png`, `eda_results.png` | Exploratory analysis of the simulators, the payoff tails and the seed noise against the reported gaps |
 
 ## Differences from the paper
 
 | Aspect | Paper | This project |
 | --- | --- | --- |
-| Architecture | Separate network per step, two hidden layers of $d + 15$ units, ReLU, BatchNorm | Shared weights by default, 3 layers of 64 units, LeakyReLU, LayerNorm. A paper-faithful variant is available via `feature_mode = "paper"`; the stored comparison used a paper-sized network with the project inputs |
+| Architecture | Separate network per step, two hidden layers of $d + 15$ units, ReLU, BatchNorm | Shared weights by default, 3 layers of 64 units, LeakyReLU, LayerNorm. The paper-faithful variant is implemented in full, 13,800 parameters, and is compared against the default in `results/paper/paper_architecture.png` |
 | Learning rate | 0.005 | 0.001 by default, 0.005 in the paper-faithful variant |
 | Network inputs | $\log S$ (and $V$ under Heston) and the previous position | Six engineered features for the default; $\log S$, variance and the previous position in the Heston replication |
 | Cost at maturity | Zero in the numerical examples | Zero, the same convention |
@@ -173,8 +177,9 @@ Mean over 5 seeds (42 to 46), 100,000 training paths and 20 epochs, on the paper
 | Heston $p_\theta$ at $\alpha = 0.99$ | 3.49 | 2.9750 ± 0.0740 | -0.5150, 14.8 percent low (a better hedge) |
 | Figure 10 fitted log-log slope | 2/3 | 0.6898, seed CI [0.6867, 0.6936] | Close, 3.5 percent above |
 | Figure 11 fitted log-log slope | 2/3 | 0.6017, seed CI [0.5837, 0.6215] | Approximate, 9.7 percent below |
-| Figure 5, recurrent beats simple under costs | yes | tie within seed noise | Not reproduced |
-| Figures 8 and 9, call spread flattens | yes | alpha 0.99 run failed to train | Not reproduced |
+| Figure 5, recurrent beats simple under costs | yes | tie in GBM, reproduced in Heston at $t = 3.12$ | Reproduced where the paper ran it |
+| Figures 8 and 9, call spread flattens | yes | reproduced with a warm start, alpha 0.99 CVaR 99 of 0.9239 against 0.9617 | Reproduced with a warm start |
+| Section 5.1 architecture | separate net per step | 13,800 parameters, worse on CVaR 95 at $t = 4.6$ | Fidelity check |
 | Black-Scholes price $q$ | not printed | 2.2872 | Matches `bs_call_price` exactly |
 | Learned price at zero cost $p_0$ | not printed | 2.3602 ± 0.0005 | Exceeds $q$, as Proposition 3.6(ii) requires |
 
@@ -220,7 +225,7 @@ a run with both fixes applied.
 | `training_loss.png` | Training risk by epoch |
 | `learning_curves.png` | PnL distribution function and risk profile across confidence levels |
 | `position_dynamics.png` | Delta trajectories and position against moneyness over time |
-| `pnl_paths.png` | Marked-to-market PnL paths and per strategy bands (the stored file is the older hedge-account version) |
+| `pnl_paths.png` | Marked-to-market PnL paths and per strategy bands |
 | `heston_cost_sensitivity.png` | Heston CVaR at 95 and 99 percent across cost levels |
 | `heston_policy_curves.png` | Heston position surface, variance difference, and the no-trade band |
 | `heston_diagnostics.png` | Heston variance paths and the policy response to volatility |

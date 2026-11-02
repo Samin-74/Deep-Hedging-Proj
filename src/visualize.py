@@ -1289,6 +1289,7 @@ def plot_recurrent_ablation(
     records: Sequence[Mapping[str, object]],
     scenarios: Sequence[Mapping[str, object]],
     results_path: str | Path,
+    suffix: str = "",
 ) -> Path:
     # Paper Figures 4 and 5: recurrent against simple, absolute and paired difference
     fig, axes = plt.subplots(1, 3, figsize=(16.6, 5.0))
@@ -1348,7 +1349,7 @@ def plot_recurrent_ablation(
     fig.suptitle("Paper Figures 4 and 5: recurrent against simple network, 5 seed mean",
                  fontsize=11.5, color=TEXT_COLOR)
     fig.tight_layout()
-    return _save(fig, _output(results_path, "recurrent_ablation.png"))
+    return _save(fig, _output(results_path, f"recurrent_ablation{suffix}.png"))
 
 
 def plot_architecture_comparison(payload: Mapping[str, object], results_path: str | Path) -> Path:
@@ -1403,7 +1404,11 @@ def plot_architecture_comparison(payload: Mapping[str, object], results_path: st
     fig.tight_layout()
     return _save(fig, _output(results_path, "paper_architecture.png"))
 
-def plot_call_spread(payload: Mapping[str, object], results_path: str | Path) -> Path:
+def plot_call_spread(
+    payload: Mapping[str, object],
+    results_path: str | Path,
+    suffix: str = "",
+) -> Path:
     # Paper Figures 8 and 9: holdings flatten as risk aversion rises
     grid = payload["holdings_grid"]
     s_grid = np.array(grid["s"], dtype=float)
@@ -1446,10 +1451,14 @@ def plot_call_spread(payload: Mapping[str, object], results_path: str | Path) ->
     ax.set_ylabel("Variance")
     ax.set_title(f"alpha {alphas[-1]} minus alpha {alphas[0]}")
     _style(ax)
-    fig.suptitle("Paper Figures 8 and 9 attempt: call spread holdings, the alpha 0.99 run did not train",
-                 fontsize=11.5, color=TEXT_COLOR)
+    title = (
+        "Paper Figures 8 and 9: call spread holdings, warm started"
+        if suffix
+        else "Paper Figures 8 and 9 attempt: call spread holdings, the alpha 0.99 run did not train"
+    )
+    fig.suptitle(title, fontsize=11.5, color=TEXT_COLOR)
     fig.tight_layout()
-    return _save(fig, _output(results_path, "call_spread.png"))
+    return _save(fig, _output(results_path, f"call_spread{suffix}.png"))
 
 def plot_heston_asymptotics(payload: Mapping[str, object], results_path: str | Path) -> Path:
     # Paper Figure 11: same 2/3 scaling under Heston with two instruments

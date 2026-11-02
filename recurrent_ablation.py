@@ -4,6 +4,7 @@ import math
 import time
 from dataclasses import replace
 from pathlib import Path
+from typing import Mapping, Sequence
 
 import numpy as np
 import torch
@@ -29,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shards", type=int, default=1)
     parser.add_argument("--raw-out", default=None)
     parser.add_argument("--aggregate", type=int, default=0)
+    parser.add_argument("--setting", choices=("gbm", "paper_heston"), default="gbm")
     parser.add_argument("--smoke", action="store_true")
     return parser.parse_args()
 
@@ -38,6 +40,8 @@ SCENARIOS = (
     {"key": "a", "label": "no cost, CVaR 0.50", "cost_rate": 0.0, "cvar_alpha": 0.5},
     {"key": "b", "label": "1 percent cost, CVaR 0.99", "cost_rate": 0.01, "cvar_alpha": 0.99},
 )
+# The Heston rerun only needs scenario (b), the one where Figure 5 makes a claim
+HESTON_SCENARIOS = (SCENARIOS[1],)
 
 
 def base_config(args: argparse.Namespace) -> Config:
@@ -51,6 +55,16 @@ def base_config(args: argparse.Namespace) -> Config:
         "run_cost_sensitivity": False,
         "results_dir": args.results_dir,
     }
+    if args.setting == "paper_heston":
+        # Same overrides as paper_heston.paper_config
+        overrides.update(
+            {
+                "simulator": "paper_heston",
+                "paper_heston": True,
+                "hidden_dim": 30,
+                "n_layers": 2,
+            }
+        )
     config = replace(config, **overrides)
     config.validate()
     return config
@@ -89,9 +103,10 @@ def evaluate_variant(
 def run_shard(args: argparse.Namespace, config: Config) -> int:
     # Worker mode over (scenario, seed, variant) cells
     seed_everything(config.seed, deterministic=config.deterministic)
+    scenarios = HESTON_SCENARIOS if args.setting == "paper_heston" else SCENARIOS
     cells = [
         (scenario, seed, recurrent)
-        for scenario in SCENARIOS
+        for scenario in scenarios
         for seed in args.seeds
         for recurrent in (True, False)
     ]
@@ -104,9 +119,35 @@ def run_shard(args: argparse.Namespace, config: Config) -> int:
             cost_rate=float(scenario["cost_rate"]),
             cvar_alpha=float(scenario["cvar_alpha"]),
         )
-        eval_spots, _ = simulate_paths(level, level.n_eval_paths, seed=seed + 1)
+        # The Heston rerun uses a fixed evaluation seed so no test set coincides with training
+        eval_seed = 10000 if args.setting == "paper_heston" else seed + 1
+        eval_spots, eval_var = simulate_paths(level, level.n_eval_paths, seed=eval_seed)
         tick = time.perf_counter()
-        record = evaluate_variant(level, seed, recurrent, eval_spots)
+        if args.setting == "paper_heston":
+            level = replace(level, use_prev_delta=bool(recurrent))
+            train_spots, train_var = simulate_paths(level, level.n_paths, seed=int(seed))
+            model, history, _ = train_policy(level, train_spots, train_var, seed=int(seed))
+            pnl, _, _ = run_policy(model, eval_spots, eval_var, level)
+            with torch.no_grad():
+                deltas = model(eval_spots, eval_var)
+            stock = deltas[:, :, 0] if deltas.dim() == 3 else deltas
+            detail = hedge_pnl(eval_spots, deltas, level.K, level.cost_rate,
+                               second_strike=level.payoff_second_strike)
+            record = {
+                "seed": int(seed),
+                "recurrent": bool(recurrent),
+                "risk": float(empirical_cvar(pnl, level.cvar_alpha)),
+                "mean": float(pnl.mean()),
+                "std": float(pnl.std(unbiased=True)),
+                "cvar_95": float(empirical_cvar(pnl, 0.95)),
+                "cvar_99": float(empirical_cvar(pnl, 0.99)),
+                "mean_cost": float(detail["costs"].mean()),
+                "turnover": float(detail["turnover"].mean()),
+                "final_train_risk": float(history[-1]),
+                "n_params": int(model.count_parameters()),
+            }
+        else:
+            record = evaluate_variant(level, seed, recurrent, eval_spots)
         record["scenario"] = scenario["key"]
         record["cost_rate"] = float(scenario["cost_rate"])
         record["cvar_alpha"] = float(scenario["cvar_alpha"])
@@ -128,10 +169,13 @@ def run_shard(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
-def aggregate_records(records: list[dict]) -> dict[str, dict[str, dict[str, float]]]:
+def aggregate_records(
+    records: list[dict],
+    scenarios: Sequence[Mapping[str, object]] = SCENARIOS,
+) -> dict[str, dict[str, dict[str, float]]]:
     # Mean and sample standard deviation per scenario and variant
     out: dict[str, dict[str, dict[str, float]]] = {}
-    for scenario in SCENARIOS:
+    for scenario in scenarios:
         key = scenario["key"]
         out[key] = {}
         for recurrent in (True, False):
@@ -153,13 +197,17 @@ def aggregate_records(records: list[dict]) -> dict[str, dict[str, dict[str, floa
     return out
 
 
-def print_table(summary: dict, records: list[dict]) -> None:
+def print_table(
+    summary: dict,
+    records: list[dict],
+    scenarios: Sequence[Mapping[str, object]] = SCENARIOS,
+) -> None:
     print()
     print("Paper Figures 4 and 5: recurrent against simple, 5 seed mean")
     header = f"{'scenario':<26} {'variant':<11} {'risk':>14} {'mean cost':>16} {'turnover':>16}"
     print(header)
     print("-" * len(header))
-    for scenario in SCENARIOS:
+    for scenario in scenarios:
         block = summary.get(scenario["key"], {})
         for name in ("recurrent", "simple"):
             if name not in block:
@@ -173,7 +221,7 @@ def print_table(summary: dict, records: list[dict]) -> None:
             )
     print()
     print("Paired difference within seed, recurrent minus simple")
-    for scenario in SCENARIOS:
+    for scenario in scenarios:
         key = scenario["key"]
         rec = {r["seed"]: r for r in records if r["scenario"] == key and r["recurrent"]}
         simp = {r["seed"]: r for r in records if r["scenario"] == key and not r["recurrent"]}
@@ -201,6 +249,7 @@ def main() -> int:
     print("Paper Figures 4 and 5: does the previous position matter")
     print("=" * 78)
     started = time.perf_counter()
+    scenarios_used = HESTON_SCENARIOS if args.setting == "paper_heston" else SCENARIOS
     if args.aggregate:
         records: list[dict] = []
         for path in sorted(results.glob("raw_r3_shard*.json")):
@@ -209,7 +258,7 @@ def main() -> int:
     else:
         seed_everything(config.seed, deterministic=config.deterministic)
         records = []
-        for scenario in SCENARIOS:
+        for scenario in scenarios_used:
             level = replace(
                 config,
                 cost_rate=float(scenario["cost_rate"]),
@@ -233,8 +282,8 @@ def main() -> int:
                         flush=True,
                     )
 
-    summary = aggregate_records(records)
-    print_table(summary, records)
+    summary = aggregate_records(records, scenarios_used)
+    print_table(summary, records, scenarios_used)
 
     payload = {
         "scenarios": [
@@ -244,12 +293,13 @@ def main() -> int:
                 "cost_rate": float(s["cost_rate"]),
                 "cvar_alpha": float(s["cvar_alpha"]),
             }
-            for s in SCENARIOS
+            for s in scenarios_used
         ],
         "seeds": list(args.seeds),
         "summary": summary,
         "records": records,
         "config": {
+            "setting": args.setting,
             "simulator": config.simulator,
             "loss_type": config.loss_type,
             "n_paths": config.n_paths,
@@ -263,12 +313,17 @@ def main() -> int:
             "commit": "uncommitted",
         },
     }
-    target = results / "recurrent_ablation.json"
+    target = results / (
+        "recurrent_ablation_heston.json" if args.setting == "paper_heston" else "recurrent_ablation.json"
+    )
     target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(f"\nwritten {target}")
 
     if not args.smoke:
-        plot_recurrent_ablation(records, SCENARIOS, results)
+        if args.setting == "paper_heston":
+            plot_recurrent_ablation(records, scenarios_used, results, suffix="_heston")
+        else:
+            plot_recurrent_ablation(records, scenarios_used, results)
     print(f"total runtime {time.perf_counter() - started:.1f}s")
     return 0
 

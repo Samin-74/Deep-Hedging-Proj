@@ -33,6 +33,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shards", type=int, default=1)
     parser.add_argument("--raw-out", default=None)
     parser.add_argument("--aggregate", type=int, default=0)
+    parser.add_argument("--simple", action="store_true", help="drop the previous position input")
+    parser.add_argument("--warm-start", action="store_true", help="start the higher alpha from the lower one")
+    parser.add_argument("--warm-epochs", type=int, default=20)
+    parser.add_argument("--warm-lr", type=float, default=0.0005)
     parser.add_argument("--smoke", action="store_true")
     return parser.parse_args()
 
@@ -52,6 +56,7 @@ def paper_config(args: argparse.Namespace) -> Config:
         "results_dir": args.results_dir,
         "hidden_dim": 30,
         "n_layers": 2,
+        "use_prev_delta": not bool(args.simple),
     }
     config = replace(config, **overrides)
     config.validate()
@@ -107,12 +112,21 @@ def evaluate_alpha(
     alpha: float,
     eval_spots_t: torch.Tensor,
     eval_var_t: torch.Tensor,
+    initial_model=None,
+    epochs: int | None = None,
+    lr: float | None = None,
 ) -> dict[str, object]:
     level = replace(config, cvar_alpha=float(alpha), seed=int(seed))
+    if epochs is not None:
+        level = replace(level, epochs=int(epochs))
+    if lr is not None:
+        level = replace(level, lr=float(lr))
     train_spots, train_var = simulate_paths(level, level.n_paths, seed=int(seed))
-    model, history, _ = train_policy(level, train_spots, train_var, seed=int(seed))
+    model, history, _ = train_policy(
+        level, train_spots, train_var, seed=int(seed), initial_model=initial_model
+    )
     pnl, _ = run_policy(model, eval_spots_t, eval_var_t, level, return_path=False)
-    return {
+    record = {
         "alpha": float(alpha),
         "seed": int(seed),
         "cvar": float(empirical_cvar(pnl, alpha)),
@@ -121,7 +135,10 @@ def evaluate_alpha(
         "cvar_95": float(empirical_cvar(pnl, 0.95)),
         "cvar_99": float(empirical_cvar(pnl, 0.99)),
         "final_train_risk": float(history[-1]),
+        "warm_started": initial_model is not None,
     }
+    # The model is returned separately so it never reaches the JSON records
+    return record, model
 
 
 def run_shard(args: argparse.Namespace, config: Config) -> int:
@@ -134,10 +151,33 @@ def run_shard(args: argparse.Namespace, config: Config) -> int:
     print(f"shard {args.shard}/{args.shards}: {len(mine)} of {len(cells)} cells", flush=True)
     eval_spots_t, eval_var_t = simulate_paths(config, config.n_eval_paths, seed=config.seed + 1)
     records: list[dict] = []
+    # Warm start trains the lowest alpha first, then reuses its weights for the rest
+    base_alpha = min(args.alphas)
+    warm_models: dict[int, object] = {}
+    seen: set[tuple[float, int]] = set()
     for alpha, seed in mine:
         tick = time.perf_counter()
-        record = evaluate_alpha(config, seed, alpha, eval_spots_t, eval_var_t)
-        records.append(record)
+        initial = None
+        epochs = None
+        lr = None
+        if args.warm_start and abs(alpha - base_alpha) > 1e-9:
+            if seed not in warm_models:
+                base, base_model = evaluate_alpha(config, seed, base_alpha, eval_spots_t, eval_var_t)
+                warm_models[seed] = base_model
+                # The base cell may also be in this shard, so record it only once
+                if (base_alpha, seed) not in seen:
+                    seen.add((base_alpha, seed))
+                    records.append(base)
+            initial = warm_models[seed]
+            epochs = args.warm_epochs
+            lr = args.warm_lr
+        record, _ = evaluate_alpha(
+            config, seed, alpha, eval_spots_t, eval_var_t,
+            initial_model=initial, epochs=epochs, lr=lr,
+        )
+        if (alpha, seed) not in seen:
+            seen.add((alpha, seed))
+            records.append(record)
         print(
             f"  alpha {alpha:.2f} seed {seed}  CVaR {record['cvar']:8.4f}  "
             f"mean {record['mean']:8.4f}  {time.perf_counter() - tick:6.1f}s",
@@ -212,7 +252,7 @@ def main() -> int:
         for alpha in args.alphas:
             for seed in args.seeds:
                 tick = time.perf_counter()
-                record = evaluate_alpha(config, seed, alpha, eval_spots_t, eval_var_t)
+                record, _ = evaluate_alpha(config, seed, alpha, eval_spots_t, eval_var_t)
                 records.append(record)
                 print(
                     f"  alpha {alpha:.2f} seed {seed}  CVaR {record['cvar']:8.4f}  "
@@ -277,14 +317,19 @@ def main() -> int:
             "n_eval_paths": config.n_eval_paths,
             "epochs": config.epochs,
             "seeds": list(args.seeds),
+            "simple": bool(args.simple),
+            "warm_start": bool(args.warm_start),
+            "warm_epochs": int(args.warm_epochs) if args.warm_start else 0,
+            "warm_lr": float(args.warm_lr) if args.warm_start else 0.0,
             "commit": "uncommitted",
         },
     }
-    target = results / "call_spread.json"
+    suffix = "_warmstart" if args.warm_start else ""
+    target = results / f"call_spread{suffix}.json"
     target.write_text(json.dumps(payload, indent=2, default=float), encoding="utf-8")
     print(f"\nwritten {target}")
     if not args.smoke:
-        plot_call_spread(payload, results)
+        plot_call_spread(payload, results, suffix=suffix)
     print(f"total runtime {time.perf_counter() - started:.1f}s")
     return 0
 

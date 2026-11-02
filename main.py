@@ -142,9 +142,13 @@ def train_policy(
     spots: torch.Tensor,
     variances: torch.Tensor | None,
     seed: int,
+    initial_model: DeepHedgingNetwork | None = None,
 ) -> tuple[DeepHedgingNetwork, list[float], float]:
     seed_everything(seed, deterministic=config.deterministic)
     model = build_model(config)
+    # Warm start copies the trained weights, the threshold is re-calibrated below
+    if initial_model is not None:
+        model.load_state_dict(initial_model.state_dict())
     loss_fn = build_loss(config)
     init_w = calibrate_threshold(loss_fn, model, spots, variances, config)
 
