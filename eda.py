@@ -138,7 +138,8 @@ def eda_market(paths: int) -> dict[str, object]:
         abs(out["paper_heston"]["fair_strike"] - analytic)
     )
 
-    # Discretisation bias of the Euler scheme against the exact scheme
+    # Project Heston set (Euler) against the paper set (exact CIR); the parameters differ too,
+    # so this gap is not a pure discretisation bias
     euler_mean_payoff = float(np.maximum(ht - config.K, 0.0).mean())
     exact_mean_payoff = float(np.maximum(pt - config.K, 0.0).mean())
     out["scheme_comparison"] = {

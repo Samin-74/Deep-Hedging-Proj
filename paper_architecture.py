@@ -94,6 +94,8 @@ def evaluate_variant(
         lr=float(variant["lr"]),
         norm_type=str(variant["norm_type"]),
         use_prev_delta=bool(variant["use_prev_delta"]),
+        feature_mode=str(variant["feature_mode"]),
+        activation=str(variant["activation"]),
         seed=int(seed),
     )
     train_spots, _ = simulate_paths(level, level.n_paths, seed=int(seed))

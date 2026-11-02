@@ -463,7 +463,7 @@ def plot_pnl_paths(
     results_path: str | Path,
     n_sample: int = 60,
 ) -> Path:
-    # Cumulative PnL paths with the terminal payoff included at maturity
+    # Book value paths with the short call marked to its Black-Scholes value
     path = _output(results_path, "pnl_paths.png")
     series = {"Deep Hedging": torch.as_tensor(deep_paths).detach().cpu()}
     for name, values in benchmark_paths.items():
@@ -495,13 +495,13 @@ def plot_pnl_paths(
             color=COLORS.get(name, FALLBACK_COLOR),
             alpha=0.12,
         )
-    left.set_title("Cumulative PnL of the learned policy, payoff at maturity")
-    right.set_title("Mean and 5 to 95 percent band, payoff at maturity")
+    left.set_title("Marked-to-market PnL of the learned policy")
+    right.set_title("Mean and 5 to 95 percent band, call marked to Black-Scholes")
     for ax in axes:
         ax.axhline(0.0, color=TEXT_COLOR, linewidth=0.8, alpha=0.6)
         ax.set_xlabel("Decision step")
         _style(ax)
-    left.set_ylabel("Cumulative PnL")
+    left.set_ylabel("Marked-to-market PnL")
     left.legend(frameon=False, fontsize=9.0, loc="lower left")
     right.legend(frameon=False, fontsize=9.0, loc="lower left")
     fig.tight_layout()
@@ -981,7 +981,7 @@ def plot_price_asymptotics(payload: Mapping[str, object], results_path: str | Pa
     ci_p0 = fit["ci_vs_p0"]
     fig.suptitle(
         f"Paper Figure 10 replication: q = {q:.4f}, p_0 = {p0:.4f}, "
-        f"slope {fit['free_vs_q']['slope']:.3f} [{ci_q['low']:.3f}, {ci_q['high']:.3f}]",
+        f"slope {fit['free_vs_q']['slope']:.3f}, seed bootstrap 95% CI [{ci_q['low']:.3f}, {ci_q['high']:.3f}]",
         fontsize=11.5, color=TEXT_COLOR,
     )
     fig.tight_layout()
@@ -1068,7 +1068,7 @@ def plot_heston_fig2(
     _hist_common(ax, model_pnl, "#c53030", f"Model hedge (mean {model_pnl.mean():.3f})")
     _hist_common(ax, deep, "#2b6cb0", f"Deep hedge (mean {deep.mean():.3f})")
     ax.axvline(-q, color=TEXT_COLOR, linewidth=1.4, linestyle=":", label=f"-q = {-q:.3f}")
-    ax.set_xlabel("Hedging error q - Z + (delta . S)_T")
+    ax.set_xlabel("PnL without premium, -Z + (delta . S)_T (add q for the paper's hedging error)")
     ax.set_ylabel("Density")
     ax.set_title("Paper Figure 2: hedging error at alpha 0.5")
     ax.legend(frameon=False, fontsize=8.6)
@@ -1114,12 +1114,12 @@ def plot_heston_fig6(
                      f"Deep hedge, CVaR {centre:.3f}")
         ax.axvline(-centre, color=TEXT_COLOR, linewidth=1.5, linestyle="--",
                    label=f"centred at -p = {-centre:.3f}")
-        ax.set_xlabel("Hedging error q - Z + (delta . S)_T")
+        ax.set_xlabel("PnL without premium, -Z + (delta . S)_T (add q for the paper's hedging error)")
         ax.set_ylabel("Density")
         ax.set_title(f"alpha = {alpha:.2f}   realised CVaR {centre:.3f}")
         ax.legend(frameon=False, fontsize=8.8)
         _style(ax)
-    fig.suptitle("Paper Figure 6: risk aversion widens the deep hedge tail", fontsize=11.5,
+    fig.suptitle("Paper Figure 6: higher risk aversion trims the loss tail and widens the gain side", fontsize=11.5,
                  color=TEXT_COLOR)
     fig.tight_layout()
     return _save(fig, _output(results_path, "heston_fig6.png"))
@@ -1140,14 +1140,14 @@ def plot_heston_fig7(
         _hist_common(ax, model_pnl, "#c53030", "Model hedge")
         _hist_common(ax, deep, COLORS["Deep Hedging"], "Deep hedge")
         ax.axvline(-q, color=TEXT_COLOR, linewidth=1.5, linestyle="--", label=f"-q = {-q:.3f}")
-        ax.set_xlabel("Hedging error q - Z + (delta . S)_T")
+        ax.set_xlabel("PnL without premium, -Z + (delta . S)_T (add q for the paper's hedging error)")
         ax.set_ylabel("Density")
         ax.set_title(
             f"alpha = {alpha:.2f}: deep CVaR {deep_blocks[f'{alpha:.2f}'][f'cvar_{alpha:.2f}']:.3f}"
         )
         ax.legend(frameon=False, fontsize=8.8)
         _style(ax)
-    fig.suptitle("Paper Figure 7: both policies centred at the model price", fontsize=11.5,
+    fig.suptitle("Paper Figure 7: deep hedge against the model hedge, risk-neutral price q marked", fontsize=11.5,
                  color=TEXT_COLOR)
     fig.tight_layout()
     return _save(fig, _output(results_path, "heston_fig7.png"))
@@ -1446,7 +1446,7 @@ def plot_call_spread(payload: Mapping[str, object], results_path: str | Path) ->
     ax.set_ylabel("Variance")
     ax.set_title(f"alpha {alphas[-1]} minus alpha {alphas[0]}")
     _style(ax)
-    fig.suptitle("Paper Figures 8 and 9: call spread, higher risk aversion flattens the hedge",
+    fig.suptitle("Paper Figures 8 and 9 attempt: call spread holdings, the alpha 0.99 run did not train",
                  fontsize=11.5, color=TEXT_COLOR)
     fig.tight_layout()
     return _save(fig, _output(results_path, "call_spread.png"))
@@ -1492,7 +1492,8 @@ def plot_heston_asymptotics(payload: Mapping[str, object], results_path: str | P
         _style(ax)
     fig.suptitle(
         f"Paper Figure 11: Heston price asymptotics, q = {q:.4f}, p_0 = {p0:.4f}, "
-        f"slope {fit.get('free_vs_q', {}).get('slope', float('nan')):.3f}",
+        f"slope {fit.get('free_vs_q', {}).get('slope', float('nan')):.3f}, seed bootstrap 95% CI "
+        f"[{fit.get('ci_vs_q', {}).get('low', float('nan')):.3f}, {fit.get('ci_vs_q', {}).get('high', float('nan')):.3f}]",
         fontsize=11.5, color=TEXT_COLOR,
     )
     fig.tight_layout()
@@ -1543,7 +1544,7 @@ def plot_eda_market(payload: Mapping[str, object], results_path: str | Path) -> 
     ax.axvline(100.0, color=TEXT_COLOR, linestyle=":", linewidth=1.3, label="strike 100")
     ax.set_xlabel("Terminal spot, common axis")
     ax.set_ylabel("Cumulative probability")
-    ax.set_title("Lower tail on a common axis: exact CIR carries more mass below 90")
+    ax.set_title("Lower tail: the paper parameter set (xi 2) carries more mass below 90")
     ax.legend(frameon=False, fontsize=8.4)
     _style(ax)
     fig.suptitle("Simulator EDA: the paper Heston set violates Feller by design",

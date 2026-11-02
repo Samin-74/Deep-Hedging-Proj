@@ -408,7 +408,12 @@
     "fixed_two_thirds_vs_p0": {
       "fixed_slope": 0.6666666666666666,
       "intercept": 2.8424846210129706
-    }
+    },
+    "ci_vs_q": {
+      "low": 0.5837426464381718,
+      "high": 0.6214766401412859
+    },
+    "ci_method": "percentile bootstrap over the 5 training seeds"
   },
   "config": {
     "simulator": "paper_heston",

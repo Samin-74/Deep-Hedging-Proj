@@ -8,7 +8,7 @@ import numpy as np
 import torch
 
 from config import Config
-from src.benchmarks import BenchmarkRunner
+from src.benchmarks import BenchmarkRunner, marked_pnl_path
 from src.diagnostics import cost_drag, scenario_analysis, tail_attribution
 from src.loss import (
     CVaRLoss,
@@ -262,15 +262,15 @@ def comparison_rows(summaries: dict[str, dict[str, float]]) -> list[tuple[str, .
                 f"{summary['std']:8.3f}",
                 f"{summary['cvar_95']:8.3f}",
                 f"{summary['cvar_99']:8.3f}",
-                f"{summary['dd_intra_mean']:8.3f}",
-                f"{summary['dd_intra_worst']:8.3f}",
+                f"{summary['dd_mtm_mean']:8.3f}",
+                f"{summary['dd_mtm_worst']:8.3f}",
             )
         )
     return rows
 
 
 def drawdown_rows(summaries: dict[str, dict[str, float]]) -> list[tuple[str, ...]]:
-    # Terminal-jump and intra-horizon drawdown side by side
+    # Terminal-jump and marked-to-market drawdown side by side
     rows: list[tuple[str, ...]] = []
     for name in STRATEGIES:
         s = summaries[name]
@@ -279,9 +279,9 @@ def drawdown_rows(summaries: dict[str, dict[str, float]]) -> list[tuple[str, ...
                 name,
                 f"{s['dd_terminal_mean']:8.3f}",
                 f"{s['dd_terminal_worst']:8.3f}",
-                f"{s['dd_intra_mean']:8.3f}",
-                f"{s['dd_intra_p95']:8.3f}",
-                f"{s['dd_intra_worst']:8.3f}",
+                f"{s['dd_mtm_mean']:8.3f}",
+                f"{s['dd_mtm_p95']:8.3f}",
+                f"{s['dd_mtm_worst']:8.3f}",
             )
         )
     return rows
@@ -327,23 +327,23 @@ def print_comparison(summaries: dict[str, dict[str, float]]) -> None:
         "Std",
         "CVaR 95",
         "CVaR 99",
-        "Intra DD mean",
-        "Intra DD worst",
+        "MtM DD mean",
+        "MtM DD worst",
     )
     print()
     print("Terminal PnL statistics on the evaluation set")
     print(format_table(headers, comparison_rows(summaries)))
     print()
-    print("Drawdown: terminal jump includes the maturity liability, intra excludes it")
+    print("Drawdown: terminal jump books the liability at maturity, MtM marks it to Black-Scholes value")
     print(
         format_table(
             (
                 "Strategy",
                 "Term DD mean",
                 "Term DD worst",
-                "Intra DD mean",
-                "Intra DD p95",
-                "Intra DD worst",
+                "MtM DD mean",
+                "MtM DD p95",
+                "MtM DD worst",
             ),
             drawdown_rows(summaries),
         )
@@ -365,12 +365,12 @@ def print_diagnostics(summaries: dict[str, dict[str, float]]) -> None:
 def extra_summary(
     pnl: torch.Tensor,
     pnl_path: torch.Tensor | None,
-    pnl_path_pre: torch.Tensor | None = None,
+    pnl_path_marked: torch.Tensor | None = None,
 ) -> dict[str, float]:
     summary = summarize_pnl(pnl, pnl_path)
     summary["median"] = float(pnl.median())
-    if pnl_path is not None and pnl_path_pre is not None:
-        summary.update(summarize_drawdown(pnl_path, pnl_path_pre))
+    if pnl_path is not None and pnl_path_marked is not None:
+        summary.update(summarize_drawdown(pnl_path, pnl_path_marked))
     return summary
 
 
@@ -502,10 +502,20 @@ def main() -> int:
     deep_pnl, deep_path, deep_pre = run_policy(model, eval_spots, eval_var, config)
     benches = benchmark_results(eval_spots, config)
 
-    summaries = {"Deep Hedging": extra_summary(deep_pnl, deep_path, deep_pre)}
+    def mark(path_pre: torch.Tensor) -> torch.Tensor:
+        # Book value with the short call carried at its Black-Scholes price
+        return marked_pnl_path(
+            path_pre, eval_spots, config.K, config.r, config.benchmark_sigma, config.dt
+        )
+
+    marked_paths = {"Deep Hedging": mark(deep_pre)}
+    for name, payload in benches.items():
+        marked_paths[name] = mark(payload["pnl_path_pre"])
+
+    summaries = {"Deep Hedging": extra_summary(deep_pnl, deep_path, marked_paths["Deep Hedging"])}
     for name, payload in benches.items():
         summaries[name] = extra_summary(
-            payload["pnl"], payload["pnl_path"], payload["pnl_path_pre"]
+            payload["pnl"], payload["pnl_path"], marked_paths[name]
         )
 
     print_comparison(summaries)
@@ -517,13 +527,12 @@ def main() -> int:
                             second_strike=config.payoff_second_strike)
     costs = {"Deep Hedging": deep_detail["costs"]}
     pnls = {"Deep Hedging": deep_pnl}
-    delta_paths = {"Deep Hedging": deep_deltas}
-    pnl_paths = {"Deep Hedging": deep_path}
+    # Traded volume sum |delta_k - delta_{k-1}|, not the sum of positions
+    turnovers = {"Deep Hedging": deep_detail["turnover"]}
     for name, payload in benches.items():
         costs[name] = payload["costs"]
         pnls[name] = payload["pnl"]
-        delta_paths[name] = payload["deltas"]
-        pnl_paths[name] = payload["pnl_path"]
+        turnovers[name] = payload["turnover"]
 
     print()
     print("Hedge diagnostics")
@@ -536,7 +545,7 @@ def main() -> int:
                     f"{cost:.4f}",
                     f"{gross:.4f}",
                     f"{net:.4f}",
-                    f"{float(delta_paths[name].abs().sum(dim=1).mean()):.4f}",
+                    f"{float(turnovers[name].mean()):.4f}",
                     f"{tail_attribution(pnls[name], costs[name], config.cvar_alpha)['tail_cost_share']:.3f}",
                 )
                 for name, cost, gross, net in cost_drag(costs, pnls, config.cvar_alpha)
@@ -626,7 +635,7 @@ def main() -> int:
         ),
         plot_learning_curves(deep_pnl, deltas_edge_pnls, results),
         plot_position_dynamics(deep_deltas, deltas_edge, eval_spots, results),
-        plot_pnl_paths(deep_path, pnl_paths, results),
+        plot_pnl_paths(marked_paths["Deep Hedging"], marked_paths, results),
     ]
 
     if config.run_cost_sensitivity:
@@ -660,7 +669,8 @@ def main() -> int:
             {"strategy": name, "mean_cost": float(cost), "gross_pnl": float(gross), "net_pnl": float(net)}
             for name, cost, gross, net in cost_drag(costs, pnls, config.cvar_alpha)
         ],
-        "turnover": {name: float(paths.abs().sum(dim=1).mean()) for name, paths in delta_paths.items()},        "tail_cost_share": {
+        "turnover": {name: float(values.mean()) for name, values in turnovers.items()},
+        "tail_cost_share": {
             name: float(tail_attribution(pnls[name], costs[name], config.cvar_alpha)["tail_cost_share"])
             for name in STRATEGIES
         },

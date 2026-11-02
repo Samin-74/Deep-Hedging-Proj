@@ -144,6 +144,30 @@ def bootstrap_slope(
     return float(low), float(high)
 
 
+def seed_bootstrap_slope(
+    records: list[dict[str, float]],
+    base: float,
+    n_boot: int = 4000,
+    seed: int = 0,
+) -> tuple[float, float]:
+    # Percentile interval from resampling whole seeds, the training noise in the fit
+    costs = sorted({float(r["cost"]) for r in records if float(r["cost"]) > 0.0})
+    seeds = sorted({int(r["seed"]) for r in records})
+    table = {(float(r["cost"]), int(r["seed"])): float(r["entropic"]) for r in records}
+    x = np.log(np.array(costs))
+    rng = np.random.default_rng(seed)
+    slopes = []
+    for _ in range(n_boot):
+        pick = rng.choice(seeds, size=len(seeds), replace=True)
+        excess = np.array([np.mean([table[(c, s)] for s in pick]) - base for c in costs])
+        if np.all(excess > 0.0):
+            slopes.append(float(np.polyfit(x, np.log(excess), 1)[0]))
+    if not slopes:
+        return float("nan"), float("nan")
+    low, high = np.percentile(slopes, [2.5, 97.5])
+    return float(low), float(high)
+
+
 def intercept_only_fit(
     x: np.ndarray,
     y: np.ndarray,
@@ -293,8 +317,9 @@ def main() -> int:
     y_p0 = np.log(np.array([summary[f"{c:.6f}"]["entropic"]["mean"] - p0 for c in grid]))
     free_q = fit_slope(x, y_q)
     free_p0 = fit_slope(x, y_p0)
-    ci_q = bootstrap_slope(x, y_q)
-    ci_p0 = bootstrap_slope(x, y_p0)
+    # Resample seeds, not cost levels: five points are too few to bootstrap
+    ci_q = seed_bootstrap_slope(records, q)
+    ci_p0 = seed_bootstrap_slope(records, p0)
     fixed_q = intercept_only_fit(x, y_q, 2.0 / 3.0)
     fixed_p0 = intercept_only_fit(x, y_p0, 2.0 / 3.0)
 

@@ -144,7 +144,8 @@ def build_model_hedge(config: Config) -> ModelHedge:
     sigma = marginal_vol(params, config.T)
     horizon_sigma = config.S0 * sigma
     s_grid = np.linspace(config.S0 - 6.0 * horizon_sigma, config.S0 + 6.0 * horizon_sigma, 161)
-    # The lower bound keeps dq/dv finite, near zero variance it explodes and is never visited
+    # The lower bound keeps dq/dv finite; about half of the decision points sit below it and are
+    # clamped, which moves the model hedge CVaR by about 0.001 against a grid down to 1e-5
     v_grid = np.linspace(0.2 * config.paper_heston_theta, 4.0 * config.paper_heston_theta, 77)
     return ModelHedge(params, config.K, config.T, config.n_steps, s_grid, v_grid)
 
@@ -294,9 +295,13 @@ def main() -> int:
                 "n": len(subset),
             }
             block[f"cvar_{alpha:.2f}"] = float(np.mean([r["cvar"] for r in subset]))
-            # Any other alpha key the figure code asks for is filled from the same records
+            # Other confidence levels are measured on each seed's stored PnL sample
             for other in args.alphas:
-                block[f"cvar_{other:.2f}"] = float(np.mean([r["cvar"] for r in subset]))
+                if abs(other - alpha) < 1e-9:
+                    continue
+                block[f"cvar_{other:.2f}"] = float(
+                    np.mean([cvar(np.asarray(r["sample"]), other) for r in subset if "sample" in r])
+                )
             records["deep"][f"{alpha:.2f}"] = block
             # Per seed PnL samples feed figures 2, 6 and 7
             samples = [

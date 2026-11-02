@@ -10,6 +10,7 @@ import torch
 
 from config import Config
 from main import run_policy, seed_everything, train_policy
+from price_asymptotics import seed_bootstrap_slope
 from paper_heston import build_model_hedge, model_hedge_pnl
 from src.heston import HestonParams, heston_call_price
 from src.loss import EntropicRiskLoss
@@ -193,6 +194,8 @@ def main() -> int:
         y_p0 = np.log(np.array([summary[f"{c:.6f}"]["entropic"]["mean"] - p0 for c in grid]))
         fit_out["free_vs_q"] = fit_slope(x, y_q)
         fit_out["free_vs_p0"] = fit_slope(x, y_p0)
+        low, high = seed_bootstrap_slope(records, q)
+        fit_out["ci_vs_q"] = {"low": low, "high": high}
         fit_out["fixed_two_thirds_vs_q"] = {
             "fixed_slope": 2.0 / 3.0,
             "intercept": float(np.mean(y_q - (2.0 / 3.0) * x)),

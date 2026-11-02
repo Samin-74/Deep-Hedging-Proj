@@ -1365,12 +1365,12 @@
       "se": 0.008501082632935293
     },
     "ci_vs_q": {
-      "low": 0.6362032979075989,
-      "high": 0.7353383745363662
+      "low": 0.6867378117702725,
+      "high": 0.6936242636230974
     },
     "ci_vs_p0": {
-      "low": 0.8132633843753594,
-      "high": 0.8645563955398907
+      "low": 0.8333167506040018,
+      "high": 0.8431602572812577
     },
     "fixed_two_thirds_vs_q": {
       "fixed_slope": 0.6666666666666666,
@@ -1379,7 +1379,8 @@
     "fixed_two_thirds_vs_p0": {
       "fixed_slope": 0.6666666666666666,
       "intercept": 3.049124528058844
-    }
+    },
+    "ci_method": "percentile bootstrap over the 5 training seeds"
   },
   "config": {
     "simulator": "gbm",

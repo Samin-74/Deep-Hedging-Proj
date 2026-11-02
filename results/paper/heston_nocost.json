@@ -50,7 +50,8 @@
       ],
       "n": 5,
       "cvar_0.50": 1.9629809379577636,
-      "cvar_0.99": 1.9629809379577636
+      "cvar_0.99": 3.4541150093078614,
+      "cvar_0.99_note": "measured on the stored 40,000 path sample per seed"
     },
     "0.99": {
       "mean": -1.7020259791905947,
@@ -71,7 +72,8 @@
       ],
       "n": 5,
       "cvar_0.99": 2.975037670135498,
-      "cvar_0.50": 2.975037670135498
+      "cvar_0.50": 2.236946153640747,
+      "cvar_0.50_note": "measured on the stored 40,000 path sample per seed"
     }
   },
   "history": {},

@@ -14,15 +14,16 @@
     },
     {
       "key": "paper",
-      "label": "Paper Section 5.1",
+      "label": "Paper-sized per-step network, project inputs",
       "time_dependent": true,
       "hidden_dim": 17,
       "n_layers": 2,
       "lr": 0.005,
       "norm_type": "batchnorm",
-      "activation": "relu",
-      "feature_mode": "paper",
-      "use_prev_delta": true
+      "activation": "leaky_relu",
+      "feature_mode": "engineered",
+      "use_prev_delta": true,
+      "note": "feature_mode and activation were not passed to the config in this run, so the paper inputs and ReLU were not used"
     }
   ],
   "seeds": [

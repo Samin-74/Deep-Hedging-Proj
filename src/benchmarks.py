@@ -13,14 +13,14 @@ def bs_delta(
     S: torch.Tensor,
     K: float,
     r: float,
-    sigma: float,
+    sigma: torch.Tensor | float,
     tau: torch.Tensor | float,
 ) -> torch.Tensor:
-    # Black-Scholes delta of a European call
+    # Black-Scholes delta of a European call, sigma may be a per-path tensor
     S = torch.as_tensor(S, dtype=torch.float32)
     tau = torch.as_tensor(tau, dtype=S.dtype, device=S.device)
     tau = torch.clamp(tau, min=1e-8)
-    sigma = max(float(sigma), 1e-8)
+    sigma = torch.clamp(torch.as_tensor(sigma, dtype=S.dtype, device=S.device), min=1e-8)
     sqrt_tau = torch.sqrt(tau)
     d1 = (torch.log(S / K) + (r + 0.5 * sigma**2) * tau) / (sigma * sqrt_tau)
     return _norm_cdf(d1)
@@ -42,6 +42,43 @@ def bs_call_price(
     d2 = d1 - sigma * sqrt_tau
     ncdf = lambda z: 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
     return float(S) * ncdf(d1) - float(K) * math.exp(-r * tau) * ncdf(d2)
+
+
+def bs_call_value(
+    S: torch.Tensor,
+    K: float,
+    r: float,
+    sigma: float,
+    tau: torch.Tensor | float,
+) -> torch.Tensor:
+    # Tensor Black-Scholes call value, equal to the payoff where tau is zero
+    S = torch.as_tensor(S, dtype=torch.float32)
+    tau = torch.as_tensor(tau, dtype=S.dtype, device=S.device).expand_as(S)
+    sigma = max(float(sigma), 1e-8)
+    live = tau > 0.0
+    safe_tau = torch.where(live, tau, torch.ones_like(tau))
+    vol = sigma * torch.sqrt(safe_tau)
+    d1 = (torch.log(S / K) + (r + 0.5 * sigma**2) * safe_tau) / vol
+    d2 = d1 - vol
+    price = S * _norm_cdf(d1) - K * torch.exp(-r * safe_tau) * _norm_cdf(d2)
+    return torch.where(live, price, torch.relu(S - K))
+
+
+def marked_pnl_path(
+    pnl_path_pre: torch.Tensor,
+    spots: torch.Tensor,
+    K: float,
+    r: float,
+    sigma: float,
+    dt: float,
+) -> torch.Tensor:
+    # Hedge account minus the Black-Scholes value of the short call, ends at terminal PnL
+    if pnl_path_pre.shape != spots.shape:
+        raise ValueError("pnl_path_pre and spots must share shape")
+    n_steps = spots.shape[1] - 1
+    steps = torch.arange(n_steps + 1, device=spots.device, dtype=spots.dtype)
+    taus = (n_steps - steps) * dt
+    return pnl_path_pre - bs_call_value(spots, K, r, sigma, taus)
 
 
 def leland_volatility(sigma: float, cost_rate: float, dt: float) -> float:
