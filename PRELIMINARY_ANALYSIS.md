@@ -680,12 +680,21 @@ trade. The paper does not print a GBM position trajectory figure, so this is an 
 
 ### `pnl_paths.png`
 
-**Withdrawn.** This figure plots the hedge account alone and books the whole option liability at the
-last step. The 5 to 95 percent bands therefore mostly show the gains and losses of holding about half a
-share, not the risk of the hedged position, and they are almost identical for all three strategies.
-`main.py` now draws this figure with the short call marked to its Black-Scholes value at every step,
-so the path ends exactly at terminal PnL; the corrected figure is produced on the next run of
-`main.py`. The file in `results/` is the old version and should not be used.
+Left: 60 sampled marked-to-market PnL paths of the learned policy through the decision steps, with the
+mean path. Right: the mean path and the 5 to 95 percent band for all three strategies.
+
+The short call is carried at its Black-Scholes value at every decision date, so the path ends exactly
+at terminal PnL and there is no artificial cliff at maturity. The mean path starts at about -2.3, drops
+to -2.7 once the first trade is paid for, and then declines gently to -3.26. The three strategies
+separate cleanly: deep hedging ends at -3.26, Leland at -4.28 and Black-Scholes at -4.51, and the
+ordering is the same at every step from about step 3 onward. The deep hedging band is the widest of the
+three, which is the same dispersion trade-off visible in the histogram: the policy buys a better mean
+and a better tail at the price of a wider body.
+
+An earlier version of this figure plotted the hedge account alone and booked the whole liability at the
+last step. Its bands mostly showed the gains and losses of holding about half a share, were almost
+identical across strategies, and ended in a cliff that was an artifact of the accounting rather than of
+the hedging. That version is superseded.
 
 ### Paper reproduction figures
 
@@ -805,13 +814,18 @@ figure pipeline are consistent.
 | Black-Scholes | -4.512 | 0.757 | 6.363 | 7.016 | 4.861 | 2.224 | -2.288 | 0.526 |
 | Leland | -4.281 | 0.512 | 5.539 | 6.039 | 4.429 | 1.993 | -2.288 | 0.495 |
 
-The turnover column has been removed. The stored values (15.51, 15.01, 15.11, also in the `turnover`
-field of `canonical_run.json`) were the sum of absolute positions, not traded volume. `main.py` now
-reports traded volume $\sum_k |\delta_k - \delta_{k-1}|$. With a 1 percent cost and a spot near 100,
-traded volume is close to the mean cost column, about 0.97, 2.22 and 1.99. Gross PnL is the same for all
+The turnover column has been removed. The previously stored values (15.51, 15.01, 15.11) were the sum
+of absolute positions, not traded volume, and they have been replaced in `canonical_run.json`. `main.py`
+now reports traded volume $\sum_k |\delta_k - \delta_{k-1}|$. With a 1 percent cost and a spot near 100,
+traded volume is close to the mean cost column: 0.972 for deep hedging, 2.224 for Black-Scholes and
+1.994 for Leland, against mean costs of 0.973, 2.224 and 1.993. Gross PnL is the same for all
 three strategies, as it must be: with zero drift every strategy's expected trading gain is zero.
 
-Drawdown figures from this run are withdrawn; see the drawdown section below.
+Drawdown is reported two ways. The terminal-jump version, which books the liability at maturity, gives
+mean 5.213, 6.121 and 5.896 with worst 26.650, 26.739 and 26.739; it is dominated by the common payoff
+and does not discriminate. The marked-to-market version, which carries the short call at its
+Black-Scholes value at every decision date, gives mean 1.327, 2.237 and 2.015 with worst 4.593, 6.638
+and 5.277, and it does discriminate. See the drawdown section below.
 
 Policy response at step 15 with previous position 0.508, benchmark reference in brackets:
 
@@ -992,17 +1006,26 @@ the GBM case and 0.8 here. The policy keeps the main feature of the frictional o
 position depends on the previous position, but it trades by partial adjustment rather than through a
 wide no-trade band.
 
-### Drawdown: withdrawn
+### Drawdown: terminal jump against marked-to-market
 
-The drawdown numbers from this run are withdrawn. The terminal-jump version books the whole liability
-at the last step, so it is dominated by the largest payoff and barely differs across strategies. The
-intra-horizon version used the hedge account alone, which ignores the short call: it measures the
-gains and losses of holding about half a share, not the risk of the hedged position. `main.py` now
-computes a marked-to-market drawdown, with the short call carried at its Black-Scholes value at every
-step (`marked_pnl_path` in `src/benchmarks.py`), so the path ends exactly at terminal PnL. Its numbers
-are produced on the next run of `main.py`. On a separate run of the same configuration on another
-machine it gave mean drawdowns of 1.32 (deep hedging), 2.24 (Black-Scholes) and 2.02 (Leland), the same
-ordering as the CVaR results, but those numbers are not from the run reported here.
+The earlier intra-horizon drawdown is withdrawn. It used the hedge account alone, which ignores the
+short call: it measured the gains and losses of holding about half a share, not the risk of the hedged
+position. `main.py` now computes a marked-to-market drawdown, with the short call carried at its
+Black-Scholes value at every step (`marked_pnl_path` in `src/benchmarks.py`), so the path ends exactly
+at terminal PnL.
+
+| Strategy | Terminal mean | Terminal worst | MtM mean | MtM p95 | MtM worst |
+| --- | --- | --- | --- | --- | --- |
+| Deep Hedging | 5.213 | 26.650 | 1.327 | 2.411 | 4.593 |
+| Black-Scholes | 6.121 | 26.739 | 2.237 | 3.633 | 6.638 |
+| Leland | 5.896 | 26.739 | 2.015 | 2.928 | 5.277 |
+
+The terminal column confirms the problem: the worst values are 26.650, 26.739 and 26.739, essentially
+identical, because the terminal jump is the same unbounded payoff for every strategy. The
+marked-to-market column separates them: deep hedging has the lowest mean drawdown at 1.327 against
+2.237 for Black-Scholes and 2.015 for Leland, and the lowest worst case at 4.593 against 6.638 and
+5.277. This is consistent with the CVaR ordering and shows the improvement is not confined to the
+terminal distribution.
 
 ### Entropic risk aversion sweep
 
@@ -1115,8 +1138,9 @@ not a capacity limit, but removing that artifact made it competitive rather than
    $\alpha = 0.95$ policy beats it on its own CVaR 99 objective), and the recurrent network's advantage
    under costs (Figure 5) does not appear (a tie within seed noise).
 3. The paper-architecture comparison did not use the paper's inputs or ReLU because of a configuration
-   bug, now fixed; the drawdown and `pnl_paths.png` from the canonical run are withdrawn because they
-   ignored the option. Both need a rerun to replace.
+   bug, now fixed; the comparison needs a rerun to replace the stored numbers. The drawdown and
+   `pnl_paths.png` were withdrawn because they ignored the option, and both have now been re-run with
+   the short call marked to its Black-Scholes value.
 4. Seed dispersion is measured and small relative to every reported gap. Across 5 seeds the learned
    policy's entropic risk varies by a standard deviation of 0.004 and CVaR 95 by 0.029, against gaps
    to Leland of 0.846 and 0.569. Every gap is significant at a t ratio of 26.9 or higher. The
@@ -1208,8 +1232,11 @@ price only at the money or do not use the analytic pricer at all.
   Leland from 0.10 percent cost upward is significant at a t ratio of 2.7 or higher.
 - The CVaR advantage over Leland, previously not significant at a t ratio of 1.2, is now significant
   at a t ratio of 39.2 for CVaR 95 and 26.9 for CVaR 99.
-- The drawdown metric is corrected in code: `main.py` now marks the short call to its Black-Scholes
-  value along the path. The stored intra-horizon numbers are withdrawn until the next run.
+- The drawdown metric is corrected in code and re-run. `main.py` now marks the short call to its
+  Black-Scholes value along the path, so the drawdown path ends exactly at terminal PnL. The
+  marked-to-market mean drawdown is 1.327 for deep hedging against 2.237 for Black-Scholes and 2.015
+  for Leland, the same ordering as the CVaR results. The earlier intra-horizon numbers, which used the
+  hedge account alone, are withdrawn.
 - The time-dependent variant is competitive under LayerNorm, and the comparison is now 5-seed. At
   100,000 paths and 20 epochs it reaches an entropic risk of 3.664 ± 0.010 against 3.581 ± 0.004 for the
   shared variant, and beats both benchmarks. The shared mode is ahead on every measure, so it stays
@@ -1252,15 +1279,13 @@ price only at the money or do not use the analytic pricer at all.
    paths or a lower learning rate, using the simple network as the paper does for Figures 8 and 9.
 2. Rerun the architecture comparison with the configuration bug fixed, and the recurrent ablation in
    the paper's own Heston setting, to test Figure 5 where the paper ran it.
-3. Rerun `main.py --no-sensitivity` (about 10 minutes) to produce the marked-to-market drawdown, the
-   corrected `pnl_paths.png` and traded-volume turnover.
-4. Calibrate a simulator to a real return series and evaluate out of sample on a held-out window, which
+3. Calibrate a simulator to a real return series and evaluate out of sample on a held-out window, which
    is the paper's Section 5.5. This needs real market data and a GJR-GARCH fit, both outside the
    declared scope, and it is the only substantive paper experiment still missing alongside Section 5.4.
-5. Reproduce Section 5.4, five Heston models with ten instruments. The paper reports 5.75 hours of
+4. Reproduce Section 5.4, five Heston models with ten instruments. The paper reports 5.75 hours of
    training for it, so it needs a larger compute budget rather than new code, since the multi
    instrument PnL engine and the exact CIR simulator both already support it.
-6. Test a path-dependent payoff, for example a down-and-out call, evaluated directly on the simulated
+5. Test a path-dependent payoff, for example a down-and-out call, evaluated directly on the simulated
    paths.
-7. Add a second friction model, for example quadratic market impact or a bid-ask spread, to test
+6. Add a second friction model, for example quadratic market impact or a bid-ask spread, to test
    whether the no-transaction band widens as the theory predicts when costs become nonlinear.

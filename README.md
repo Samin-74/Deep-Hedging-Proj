@@ -8,7 +8,7 @@ generated synthetically by Monte Carlo, so the project is fully self-contained.
 
 ## Layout
 
-```
+```text
 deep_hedging_project/
 ├── config.py              # Configuration dataclass, defaults and validation
 ├── main.py                # Training, evaluation, reporting and plotting entry point
@@ -207,8 +207,9 @@ The run prints a comparison table with mean PnL, standard deviation, 95 and 99 p
 drawdown, then writes figures to `results/`. Drawdown is reported twice: a terminal-jump version that
 books the whole liability at maturity, and a marked-to-market version in which the short call is
 carried at its Black-Scholes value at every step, which is the interpretable one. Turnover is the
-traded volume. The stored drawdown numbers and `pnl_paths.png` predate this and used the hedge account
-alone; they are replaced on the next run of `main.py`.
+traded volume, $\sum_k |\delta_k - \delta_{k-1}|$, which with a 1 percent cost is close to the mean
+cost column. The stored values in `results/canonical_run.json` and `results/pnl_paths.png` are from
+a run with both fixes applied.
 
 | File | Content |
 | --- | --- |
